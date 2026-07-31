@@ -11,11 +11,11 @@ use serde_json::{json, Value};
 use proxmox_router::{RpcEnvironment, RpcEnvironmentType};
 use proxmox_sys::fs::{replace_file, CreateOptions};
 
-use pbs_api_types::{Authid, BackupArchiveName};
+use pbs_api_types::{Authid, BackupArchiveName, MANIFEST_BLOB_NAME};
 use pbs_datastore::backup_info::{BackupDir, BackupInfo};
 use pbs_datastore::dynamic_index::DynamicIndexWriter;
 use pbs_datastore::fixed_index::FixedIndexWriter;
-use pbs_datastore::{DataBlob, DataStore};
+use pbs_datastore::{BackupManifest, DataBlob, DataStore};
 use proxmox_rest_server::{formatter::*, WorkerTask};
 
 use crate::backup::verify_backup_dir_with_lock;
@@ -86,6 +86,7 @@ struct SharedBackupState {
     backup_size: u64, // sums up size of all files
     backup_stat: UploadStatistic,
     backup_lock_guards: BackupLockGuards,
+    manifest: Option<BackupManifest>,
 }
 
 pub struct BackupLockGuards {
@@ -158,6 +159,7 @@ impl BackupEnvironment {
             backup_size: 0,
             backup_stat: UploadStatistic::new(),
             backup_lock_guards,
+            manifest: None,
         };
 
         Self {
@@ -339,6 +341,20 @@ impl BackupEnvironment {
         );
 
         Ok(uid)
+    }
+
+    /// Register a manifest associated with the backup snapshot for given backup session.
+    ///
+    /// Do not fully trust clients, verify the manifest consistency on backup finish.
+    /// FIXME: PBS 5: do not allow for multiple manifest uploads.
+    pub fn register_manifest(&self, manifest: BackupManifest) -> Result<(), Error> {
+        let mut state = self.state.lock().unwrap();
+
+        state.ensure_unfinished()?;
+
+        state.manifest = Some(manifest);
+
+        Ok(())
     }
 
     /// Append chunk to dynamic writer
@@ -599,13 +615,23 @@ impl BackupEnvironment {
         // always verify blob/CRC at server side
         let blob = DataBlob::load_from_reader(&mut &data[..])?;
 
-        let raw_data = blob.raw_data();
-        replace_file(&path, raw_data, CreateOptions::new(), false)?;
+        if *archive_name == *MANIFEST_BLOB_NAME {
+            let manifest = BackupManifest::try_from(blob).map_err(|err| {
+                self.log(format!(
+                    "add manifest blob failed ({orig_len} bytes, comp: {blob_len}): {err}"
+                ));
+                err
+            })?;
+            self.register_manifest(manifest)?;
+        } else {
+            let raw_data = blob.raw_data();
+            replace_file(&path, raw_data, CreateOptions::new(), false)?;
 
-        self.log(format!(
-            "add blob {:?} ({} bytes, comp: {})",
-            path, orig_len, blob_len
-        ));
+            self.log(format!(
+                "add blob {:?} ({} bytes, comp: {})",
+                path, orig_len, blob_len
+            ));
+        }
 
         let mut state = self.state.lock().unwrap();
         state.file_counter += 1;
@@ -634,12 +660,22 @@ impl BackupEnvironment {
         state.backup_lock_guards.previous_snapshot.take();
 
         // check for valid manifest and store stats
+        let Some(mut manifest) = state.manifest.take() else {
+            bail!("no backup manifest uploaded");
+        };
+
         let stats = serde_json::to_value(state.backup_stat)?;
-        self.backup_dir
-            .update_manifest(|manifest| {
-                manifest.unprotected["chunk_upload_stats"] = stats;
-            })
-            .map_err(|err| format_err!("unable to update manifest blob - {}", err))?;
+
+        manifest.unprotected["chunk_upload_stats"] = stats;
+
+        let manifest_blob = manifest.to_data_blob()?;
+
+        let path = self
+            .backup_dir
+            .full_path()
+            .join(MANIFEST_BLOB_NAME.as_ref());
+        replace_file(&path, manifest_blob.raw_data(), CreateOptions::new(), false)
+            .map_err(|err| format_err!("unable to persist manifest blob - {err}"))?;
 
         if let Some(base) = &self.last_backup {
             let path = base.backup_dir.full_path();
