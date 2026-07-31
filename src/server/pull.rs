@@ -11,10 +11,9 @@ use proxmox_human_byte::HumanByte;
 use tracing::info;
 
 use pbs_api_types::{
-    print_store_and_ns, ArchiveType, Authid, BackupArchiveName, BackupDir, BackupGroup,
-    BackupNamespace, GroupFilter, Operation, RateLimitConfig, Remote, VerifyState,
-    CLIENT_LOG_BLOB_NAME, MANIFEST_BLOB_NAME, MAX_NAMESPACE_DEPTH, PRIV_DATASTORE_AUDIT,
-    PRIV_DATASTORE_BACKUP,
+    print_store_and_ns, ArchiveType, Authid, BackupDir, BackupGroup, BackupNamespace, GroupFilter,
+    Operation, RateLimitConfig, Remote, VerifyState, CLIENT_LOG_BLOB_NAME, MANIFEST_BLOB_NAME,
+    MAX_NAMESPACE_DEPTH, PRIV_DATASTORE_AUDIT, PRIV_DATASTORE_BACKUP,
 };
 use pbs_client::BackupRepository;
 use pbs_config::CachedUserInfo;
@@ -268,7 +267,7 @@ async fn pull_single_archive<'a>(
 ) -> Result<SyncStats, Error> {
     let archive_name = &archive_info.filename;
     let mut path = snapshot.full_path();
-    path.push(archive_name);
+    path.push(archive_name.to_string());
 
     let mut tmp_path = path.clone();
     tmp_path.set_extension("tmp");
@@ -277,11 +276,13 @@ async fn pull_single_archive<'a>(
 
     info!("sync archive {archive_name}");
 
-    reader.load_file_into(archive_name, &tmp_path).await?;
+    reader
+        .load_file_into(archive_name.as_ref(), &tmp_path)
+        .await?;
 
     let mut tmpfile = std::fs::OpenOptions::new().read(true).open(&tmp_path)?;
 
-    match ArchiveType::from_path(archive_name)? {
+    match archive_name.archive_type() {
         ArchiveType::DynamicIndex => {
             let index = DynamicIndexReader::new(tmpfile).map_err(|err| {
                 format_err!("unable to read dynamic index {:?} - {}", tmp_path, err)
@@ -421,15 +422,15 @@ async fn pull_snapshot<'a>(
 
     for item in manifest.files() {
         let mut path = snapshot.full_path();
-        path.push(&item.filename);
+        path.push(item.filename.as_ref());
 
         if !corrupt && path.exists() {
-            let filename: BackupArchiveName = item.filename.as_str().try_into()?;
+            let filename = &item.filename;
             match filename.archive_type() {
                 ArchiveType::DynamicIndex => {
                     let index = DynamicIndexReader::open(&path)?;
                     let (csum, size) = index.compute_csum();
-                    match manifest.verify_file(&filename, &csum, size) {
+                    match manifest.verify_file(filename, &csum, size) {
                         Ok(_) => continue,
                         Err(err) => {
                             info!("detected changed file {path:?} - {err}");
@@ -439,7 +440,7 @@ async fn pull_snapshot<'a>(
                 ArchiveType::FixedIndex => {
                     let index = FixedIndexReader::open(&path)?;
                     let (csum, size) = index.compute_csum();
-                    match manifest.verify_file(&filename, &csum, size) {
+                    match manifest.verify_file(filename, &csum, size) {
                         Ok(_) => continue,
                         Err(err) => {
                             info!("detected changed file {path:?} - {err}");
@@ -449,7 +450,7 @@ async fn pull_snapshot<'a>(
                 ArchiveType::Blob => {
                     let mut tmpfile = std::fs::File::open(&path)?;
                     let (csum, size) = sha256(&mut tmpfile)?;
-                    match manifest.verify_file(&filename, &csum, size) {
+                    match manifest.verify_file(filename, &csum, size) {
                         Ok(_) => continue,
                         Err(err) => {
                             info!("detected changed file {path:?} - {err}");

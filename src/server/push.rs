@@ -862,9 +862,9 @@ pub(crate) async fn push_snapshot(
 
     for entry in source_manifest.files() {
         let mut path = backup_dir.full_path();
-        path.push(&entry.filename);
+        path.push(entry.filename.as_ref());
         if path.try_exists()? {
-            let archive_name = BackupArchiveName::from_path(&entry.filename)?;
+            let archive_name = &entry.filename;
             match archive_name.archive_type() {
                 ArchiveType::Blob => {
                     let file = std::fs::File::open(&path)?;
@@ -883,7 +883,7 @@ pub(crate) async fn push_snapshot(
                         // Add known chunks, ignore errors since archive might not be present
                         let _res = backup_writer
                             .download_previous_dynamic_index(
-                                &archive_name,
+                                archive_name,
                                 manifest,
                                 known_chunks.clone(),
                             )
@@ -892,7 +892,7 @@ pub(crate) async fn push_snapshot(
                     let index = DynamicIndexReader::open(&path)?;
                     let chunk_reader = reader.chunk_reader(entry.chunk_crypt_mode());
                     let sync_stats = push_index(
-                        &archive_name,
+                        archive_name,
                         index,
                         chunk_reader,
                         &backup_writer,
@@ -907,7 +907,7 @@ pub(crate) async fn push_snapshot(
                         // Add known chunks, ignore errors since archive might not be present
                         let _res = backup_writer
                             .download_previous_fixed_index(
-                                &archive_name,
+                                archive_name,
                                 manifest,
                                 known_chunks.clone(),
                             )
@@ -917,7 +917,7 @@ pub(crate) async fn push_snapshot(
                     let chunk_reader = reader.chunk_reader(entry.chunk_crypt_mode());
                     let size = index.index_bytes();
                     let sync_stats = push_index(
-                        &archive_name,
+                        archive_name,
                         index,
                         chunk_reader,
                         &backup_writer,
