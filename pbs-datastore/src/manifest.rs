@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use pbs_api_types::{BackupArchiveName, BackupType, CryptMode, Fingerprint, SnapshotVerifyState};
 use pbs_tools::crypt_config::CryptConfig;
 
+use super::DataBlob;
+
 pub const MANIFEST_LOCK_NAME: &str = ".index.json.lck";
 
 fn crypt_mode_none() -> CryptMode {
@@ -234,12 +236,19 @@ impl BackupManifest {
         }
         Ok(Some(serde_json::from_value::<SnapshotVerifyState>(verify)?))
     }
+
+    /// Consumes the manifest encoding it as pretty printed json inside a data blob.
+    pub fn to_data_blob(self) -> Result<DataBlob, Error> {
+        let manifest = serde_json::to_value(self)?;
+        let manifest = serde_json::to_string_pretty(&manifest)?;
+        DataBlob::encode(manifest.as_bytes(), None, true)
+    }
 }
 
-impl TryFrom<super::DataBlob> for BackupManifest {
+impl TryFrom<DataBlob> for BackupManifest {
     type Error = Error;
 
-    fn try_from(blob: super::DataBlob) -> Result<Self, Error> {
+    fn try_from(blob: DataBlob) -> Result<Self, Error> {
         // no expected digest available
         let data = blob
             .decode(None, None)
