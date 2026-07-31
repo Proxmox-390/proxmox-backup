@@ -671,7 +671,8 @@ impl BackupDir {
 
         update_fn(&mut manifest);
 
-        let blob = manifest.to_data_blob()?;
+        // keep existing signature
+        let blob = manifest.to_data_blob(None)?;
         let raw_data = blob.raw_data();
 
         let mut path = self.full_path();

@@ -692,7 +692,8 @@ impl BackupEnvironment {
             }
         }
 
-        let manifest_blob = manifest.to_data_blob()?;
+        // keep existing signature
+        let manifest_blob = manifest.to_data_blob(None)?;
 
         let path = self
             .backup_dir
