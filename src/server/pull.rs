@@ -276,9 +276,7 @@ async fn pull_single_archive<'a>(
 
     info!("sync archive {archive_name}");
 
-    reader
-        .load_file_into(archive_name.as_ref(), &tmp_path)
-        .await?;
+    reader.load_file_into(archive_name, &tmp_path).await?;
 
     let mut tmpfile = std::fs::OpenOptions::new().read(true).open(&tmp_path)?;
 
@@ -371,7 +369,7 @@ async fn pull_snapshot<'a>(
     tmp_manifest_name.set_extension("tmp");
     let tmp_manifest_blob;
     if let Some(data) = reader
-        .load_file_into(MANIFEST_BLOB_NAME.as_ref(), &tmp_manifest_name)
+        .load_file_into(&MANIFEST_BLOB_NAME, &tmp_manifest_name)
         .await?
     {
         tmp_manifest_blob = data;

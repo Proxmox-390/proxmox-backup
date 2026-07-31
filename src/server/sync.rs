@@ -19,9 +19,9 @@ use proxmox_rest_server::WorkerTask;
 use proxmox_router::HttpError;
 
 use pbs_api_types::{
-    Authid, BackupDir, BackupGroup, BackupNamespace, CryptMode, GroupListItem, SnapshotListItem,
-    SyncDirection, SyncJobConfig, VerifyState, CLIENT_LOG_BLOB_NAME, MAX_NAMESPACE_DEPTH,
-    PRIV_DATASTORE_BACKUP, PRIV_DATASTORE_READ,
+    Authid, BackupArchiveName, BackupDir, BackupGroup, BackupNamespace, CryptMode, GroupListItem,
+    SnapshotListItem, SyncDirection, SyncJobConfig, VerifyState, CLIENT_LOG_BLOB_NAME,
+    MAX_NAMESPACE_DEPTH, PRIV_DATASTORE_BACKUP, PRIV_DATASTORE_READ,
 };
 use pbs_client::{BackupReader, BackupRepository, HttpClient, RemoteChunkReader};
 use pbs_datastore::data_blob::DataBlob;
@@ -92,7 +92,11 @@ pub(crate) trait SyncSourceReader: Send + Sync {
     /// Asynchronously loads a file from the source into a local file.
     /// `filename` is the name of the file to load from the source.
     /// `into` is the path of the local file to load the source file into.
-    async fn load_file_into(&self, filename: &str, into: &Path) -> Result<Option<DataBlob>, Error>;
+    async fn load_file_into(
+        &self,
+        filename: &BackupArchiveName,
+        into: &Path,
+    ) -> Result<Option<DataBlob>, Error>;
 
     /// Tries to download the client log from the source and save it into a local file.
     async fn try_download_client_log(&self, to_path: &Path) -> Result<(), Error>;
@@ -122,14 +126,21 @@ impl SyncSourceReader for RemoteSourceReader {
         ))
     }
 
-    async fn load_file_into(&self, filename: &str, into: &Path) -> Result<Option<DataBlob>, Error> {
+    async fn load_file_into(
+        &self,
+        filename: &BackupArchiveName,
+        into: &Path,
+    ) -> Result<Option<DataBlob>, Error> {
         let mut tmp_file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .read(true)
             .open(into)?;
-        let download_result = self.backup_reader.download(filename, &mut tmp_file).await;
+        let download_result = self
+            .backup_reader
+            .download(filename.as_ref(), &mut tmp_file)
+            .await;
         if let Err(err) = download_result {
             match err.downcast_ref::<HttpError>() {
                 Some(HttpError { code, message }) => match *code {
@@ -198,7 +209,11 @@ impl SyncSourceReader for LocalSourceReader {
         ))
     }
 
-    async fn load_file_into(&self, filename: &str, into: &Path) -> Result<Option<DataBlob>, Error> {
+    async fn load_file_into(
+        &self,
+        filename: &BackupArchiveName,
+        into: &Path,
+    ) -> Result<Option<DataBlob>, Error> {
         let mut tmp_file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -206,7 +221,7 @@ impl SyncSourceReader for LocalSourceReader {
             .read(true)
             .open(into)?;
         let mut from_path = self.path.clone();
-        from_path.push(filename);
+        from_path.push(filename.as_ref());
         tmp_file.write_all(std::fs::read(from_path)?.as_slice())?;
         tmp_file.rewind()?;
         Ok(DataBlob::load_from_reader(&mut tmp_file).ok())
