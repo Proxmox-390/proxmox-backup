@@ -405,9 +405,9 @@ fn create_dynamic_index(
     let env: &BackupEnvironment = rpcenv.as_ref();
 
     let name = required_string_param(&param, "archive-name")?;
-    let archive_name = BackupArchiveName::try_from(name)?;
+    let archive_name = BackupArchiveName::try_from_strict(name)?;
 
-    if !archive_name.ends_with(".didx") {
+    if archive_name.archive_type() != ArchiveType::DynamicIndex {
         bail!("wrong archive extension: '{}'", archive_name.as_ref());
     }
 
@@ -455,11 +455,11 @@ fn create_fixed_index(
     let env: &BackupEnvironment = rpcenv.as_ref();
 
     let name = required_string_param(&param, "archive-name")?;
-    let archive_name = BackupArchiveName::try_from(name)?;
+    let archive_name = BackupArchiveName::try_from_strict(name)?;
     let size = required_integer_param(&param, "size")? as usize;
     let reuse_csum = param["reuse-csum"].as_str();
 
-    if !archive_name.ends_with(".fidx") {
+    if archive_name.archive_type() != ArchiveType::FixedIndex {
         bail!("wrong archive extension: '{}'", archive_name.as_ref());
     }
 
