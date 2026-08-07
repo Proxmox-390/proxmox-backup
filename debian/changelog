@@ -1,3 +1,21 @@
+rust-proxmox-backup (3.4.9-1) bookworm; urgency=medium
+
+  * backup: harden the handling of client supplied backup manifests:
+    - only accept archive names that are plain file names carrying a server
+      side type extension. A crafted name in a manifest could previously make
+      a sync job read or write outside of the snapshot directory, running as
+      the unprivileged 'backup' user. Reaching this needed a manifest from a
+      configured sync remote or from a client that already had backup access
+      to the datastore.
+    - keep an uploaded manifest in memory and only persist it on backup
+      finish, checking that every archive it lists was really uploaded during
+      that session and that the checksums match the ones computed server
+      side. A client uploading a manifest that references archives it did not
+      upload now gets an error on finish instead of such a snapshot being
+      created.
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 07 Aug 2026 14:35:29 +0200
+
 rust-proxmox-backup (3.4.8-3) bookworm; urgency=medium
 
   * update proxmox-rest-server which brings the following improvements:
