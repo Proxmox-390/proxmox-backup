@@ -1,3 +1,10 @@
+rust-proxmox-backup (3.4.9-2) bookworm; urgency=medium
+
+  * ui: add notice for nearing PBS 3 End-of-Life as additional hint for users
+    to upgrade better sooner than later.
+
+ -- Proxmox Support Team <support@proxmox.com>  Thu, 20 Aug 2026 12:22:06 +0200
+
 rust-proxmox-backup (3.4.9-1) bookworm; urgency=medium
 
   * backup: harden the handling of client supplied backup manifests:
