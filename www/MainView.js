@@ -233,6 +233,16 @@ Ext.define('PBS.MainView', {
                     baseCls: 'x-plain',
                 },
                 {
+                    xtype: 'proxmoxEOLNotice',
+                    product: 'Proxmox Backup Server',
+                    version: '3',
+                    eolDate: '2026-08-31',
+                    href: 'pbs.proxmox.com/docs/faq.html#faq-support-table',
+                },
+                {
+                    flex: 1,
+                },
+                {
                     xtype: 'button',
                     baseCls: 'x-btn',
                     cls: 'x-btn-default-toolbar-small proxmox-inline-button',
