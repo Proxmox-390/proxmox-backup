@@ -56,6 +56,7 @@ path = "src/lib.rs"
 proxmox-access-log = { version = "0.1", features = [ "api" ] }
 proxmox-apt = { version = "1.0", features = [ "cache" ] }
 proxmox-apt-api-types = "3.0"
+proxmox-apt-history = { version = "0.1", features = [ "api" ] }
 proxmox-async = "0.5"
 proxmox-auth-api = "1.0.5"
 proxmox-base64 = "1"
@@ -216,6 +217,7 @@ zstd.workspace = true
 proxmox-access-log.workspace = true
 proxmox-apt.workspace = true
 proxmox-apt-api-types.workspace = true
+proxmox-apt-history.workspace = true
 proxmox-async.workspace = true
 proxmox-auth-api = { workspace = true, features = [ "api", "pam-authenticator" ] }
 proxmox-base64.workspace = true
@@ -283,6 +285,7 @@ proxmox-rrd-api-types.workspace = true
 #proxmox-api-macro = { path = "../proxmox/proxmox-api-macro" }
 #proxmox-apt = { path = "../proxmox/proxmox-apt" }
 #proxmox-apt-api-types = { path = "../proxmox/proxmox-apt-api-types" }
+#proxmox-apt-history = { path = "../proxmox/proxmox-apt-history" }
 #proxmox-async = { path = "../proxmox/proxmox-async" }
 #proxmox-auth-api = { path = "../proxmox/proxmox-auth-api" }
 #proxmox-base64 = { path = "../proxmox/proxmox-base64" }

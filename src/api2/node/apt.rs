@@ -8,7 +8,8 @@ use proxmox_config_digest::ConfigDigest;
 use proxmox_http::ProxyConfig;
 use proxmox_rest_server::WorkerTask;
 use proxmox_router::{
-    Permission, Router, RpcEnvironment, RpcEnvironmentType, SubdirMap, list_subdirs_api_method,
+    ApiMethod, Permission, Router, RpcEnvironment, RpcEnvironmentType, SubdirMap,
+    list_subdirs_api_method,
 };
 use proxmox_schema::api;
 use proxmox_sys::fs::{CreateOptions, replace_file};
@@ -278,11 +279,20 @@ pub fn change_repository(
     proxmox_apt::change_repository(&path, index, &options, digest)
 }
 
+const API_METHOD_APT_HISTORY: ApiMethod = proxmox_apt_history::api::API_METHOD_LIST_HISTORY
+    .access(None, &Permission::Privilege(&[], PRIV_SYS_AUDIT, false));
+
+const API_METHOD_APT_TERMLOG: ApiMethod = proxmox_apt_history::api::API_METHOD_GET_TERM_LOG.access(
+    None,
+    &Permission::Privilege(&["system", "log"], PRIV_SYS_AUDIT, false),
+);
+
 const SUBDIRS: SubdirMap = &[
     (
         "changelog",
         &Router::new().get(&API_METHOD_APT_GET_CHANGELOG),
     ),
+    ("history", &Router::new().get(&API_METHOD_APT_HISTORY)),
     (
         "repositories",
         &Router::new()
@@ -290,6 +300,7 @@ const SUBDIRS: SubdirMap = &[
             .post(&API_METHOD_CHANGE_REPOSITORY)
             .put(&API_METHOD_ADD_REPOSITORY),
     ),
+    ("termlog", &Router::new().get(&API_METHOD_APT_TERMLOG)),
     (
         "update",
         &Router::new()
