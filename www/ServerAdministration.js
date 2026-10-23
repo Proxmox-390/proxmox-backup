@@ -15,6 +15,21 @@ Ext.define('PBS.ServerAdministration', {
         init: function (view) {
             var upgradeBtn = view.lookupReference('upgradeBtn');
             upgradeBtn.setDisabled(!(Proxmox.UserName && Proxmox.UserName === 'root@pam'));
+
+            // the terminal output of APT transactions is part of the system log
+            Proxmox.Utils.API2Request({
+                url: '/access/permissions',
+                params: { path: '/system/log' },
+                method: 'GET',
+                success: ({ result }) => {
+                    if (view.destroyed || view.destroying) {
+                        return;
+                    }
+                    // maps the granted privileges to whether they propagate
+                    let privs = result.data['/system/log'] ?? {};
+                    view.down('#apthistory')?.setCanShowTermLog('Sys.Audit' in privs);
+                },
+            });
         },
     },
 
@@ -62,6 +77,15 @@ Ext.define('PBS.ServerAdministration', {
             nodename: 'localhost',
             product: 'Proxmox Backup Server',
             onlineHelp: 'sysadmin_package_repositories',
+        },
+        {
+            xtype: 'proxmoxNodeAPTHistory',
+            title: gettext('Update History'),
+            itemId: 'apthistory',
+            iconCls: 'fa fa-history',
+            nodename: 'localhost',
+            // until the privileges of the user are known
+            canShowTermLog: false,
         },
         {
             xtype: 'proxmoxJournalView',
