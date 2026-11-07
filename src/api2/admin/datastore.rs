@@ -1366,9 +1366,21 @@ pub(crate) fn list_datastores_checked(
                 .map(|c| c.ty.unwrap_or_default())
                 .unwrap_or_default();
 
+            // Multi-line comments may contain markdown. List views show only a summary, so pass on
+            // the first non-empty line, capped to the 128 characters that `DataStoreListItem`'s
+            // single-line comment schema declares.
+            let comment = store_config.comment.filter(|_| allowed).map(|c| {
+                c.lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .chars()
+                    .take(128)
+                    .collect()
+            });
+
             list.push(DataStoreListItem {
                 store: store.clone(),
-                comment: store_config.comment.filter(|_| allowed),
+                comment,
                 mount_status,
                 maintenance: store_config.maintenance_mode,
                 backend_type,
