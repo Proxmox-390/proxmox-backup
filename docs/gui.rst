@@ -123,6 +123,7 @@ tasks and information. These are:
 * **Updates**: An interface for upgrading packages
 * **Repositories**: An interface for configuring APT repositories
 * **Syslog**: View log messages from the server
+* **Access Log**: View the requests to the API and statistics about them
 * **Tasks**: Task history with multiple filter options
 
 .. image:: images/screenshots/pbs-gui-disks.png

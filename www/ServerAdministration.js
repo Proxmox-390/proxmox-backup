@@ -72,6 +72,13 @@ Ext.define('PBS.ServerAdministration', {
             structured: true,
         },
         {
+            xtype: 'proxmoxAccessLogView',
+            itemId: 'access-log',
+            iconCls: 'fa fa-history',
+            title: gettext('Access Log'),
+            url: '/api2/extjs/nodes/localhost/access-log',
+        },
+        {
             xtype: 'proxmoxNodeTasks',
             itemId: 'tasks',
             iconCls: 'fa fa-list-alt',
