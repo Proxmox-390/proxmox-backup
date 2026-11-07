@@ -81,6 +81,7 @@ async fn run() -> Result<(), Error> {
     let mut command_sock = proxmox_daemon::command_socket::CommandSocket::new(backup_user.gid);
 
     proxmox_acme_api::init(configdir!("/acme"), true)?;
+    proxmox_access_log::init_access_log_api(pbs_buildcfg::API_ACCESS_LOG_FN)?;
 
     let dir_opts = CreateOptions::new()
         .owner(backup_user.uid)

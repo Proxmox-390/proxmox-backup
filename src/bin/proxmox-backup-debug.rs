@@ -13,11 +13,15 @@ fn main() {
         .expect("failed to initiate logger");
 
     // The `api` subcommand executes API handlers in-process, which rely on the globally
-    // cached api/priv user from proxmox-product-config.
+    // cached api/priv user from proxmox-product-config and on the access log path.
     if let Err(err) = pbs_config::backup_user().and_then(|api_user| {
         pbs_config::priv_user().map(|priv_user| proxmox_product_config::init(api_user, priv_user))
     }) {
         eprintln!("failed to initialize product config: {err}");
+        std::process::exit(1);
+    }
+    if let Err(err) = proxmox_access_log::init_access_log_api(pbs_buildcfg::API_ACCESS_LOG_FN) {
+        eprintln!("failed to initialize the access log API: {err}");
         std::process::exit(1);
     }
 

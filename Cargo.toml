@@ -53,6 +53,7 @@ path = "src/lib.rs"
 
 [workspace.dependencies]
 # proxmox workspace
+proxmox-access-log = { version = "0.1", features = [ "api" ] }
 proxmox-apt = { version = "1.0", features = [ "cache" ] }
 proxmox-apt-api-types = "3.0"
 proxmox-async = "0.5"
@@ -212,6 +213,7 @@ zstd.workspace = true
 #valgrind_request = { git = "https://github.com/edef1c/libvalgrind_request", version = "1.1.0", optional = true }
 
 # proxmox workspace
+proxmox-access-log.workspace = true
 proxmox-apt.workspace = true
 proxmox-apt-api-types.workspace = true
 proxmox-async.workspace = true
@@ -275,6 +277,7 @@ proxmox-rrd-api-types.workspace = true
 # NOTE: You must run `cargo update` after changing this for it to take effect!
 [patch.crates-io]
 #pbs-api-types = { path = "../proxmox/pbs-api-types" }
+#proxmox-access-log = { path = "../proxmox/proxmox-access-log" }
 #proxmox-acme = { path = "../proxmox/proxmox-acme" }
 #proxmox-acme-api = { path = "../proxmox/proxmox-acme-api" }
 #proxmox-api-macro = { path = "../proxmox/proxmox-api-macro" }

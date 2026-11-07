@@ -42,6 +42,7 @@ pub mod tasks;
 
 pub(crate) mod rrd;
 
+mod access_log;
 mod journal;
 mod report;
 pub(crate) mod services;
@@ -325,6 +326,7 @@ pub fn get_identity() -> Result<ServerIdentity, Error> {
 
 #[sortable]
 pub const SUBDIRS: SubdirMap = &sorted!([
+    ("access-log", &access_log::ROUTER),
     ("apt", &apt::ROUTER),
     ("certificates", &certificates::ROUTER),
     ("config", &config::ROUTER),
