@@ -85,10 +85,12 @@ async fn run() -> Result<(), Error> {
 
     let dir_opts = CreateOptions::new()
         .owner(backup_user.uid)
-        .group(backup_user.gid);
+        .group(backup_user.gid)
+        .perm(nix::sys::stat::Mode::from_bits_truncate(0o700));
     let file_opts = CreateOptions::new()
         .owner(backup_user.uid)
         .group(backup_user.gid);
+    let log_file_opts = file_opts.perm(nix::sys::stat::Mode::from_bits_truncate(0o640));
 
     let config = ApiConfig::new(pbs_buildcfg::JS_DIR, RpcEnvironmentType::PRIVILEGED)
         .index_handler_func(|_, _| get_index())
@@ -98,13 +100,13 @@ async fn run() -> Result<(), Error> {
         .enable_access_log(
             pbs_buildcfg::API_ACCESS_LOG_FN,
             Some(dir_opts),
-            Some(file_opts),
+            Some(log_file_opts),
             &mut command_sock,
         )?
         .enable_auth_log(
             pbs_buildcfg::API_AUTH_LOG_FN,
             Some(dir_opts),
-            Some(file_opts),
+            Some(log_file_opts),
             &mut command_sock,
         )?;
 

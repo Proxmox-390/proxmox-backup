@@ -51,6 +51,13 @@ case "$1" in
 			touch "/run/proxmox-backup/old-locking"
 		fi
 
+		if dpkg --compare-versions "$2" 'lt' '4.2.13~' && test -d /var/log/proxmox-backup/api; then
+			# the backup user owns the parent directory on hosts installed with PBS 2.0 or older and
+			# could place a symlink there, so do not follow one
+			chmod --no-dereference 0700 /var/log/proxmox-backup/api \
+			    || echo "Failed to restrict access to /var/log/proxmox-backup/api, please check manually"
+		fi
+
 	fi
     ;;
 

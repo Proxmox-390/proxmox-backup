@@ -236,22 +236,24 @@ async fn run() -> Result<(), Error> {
 
     let dir_opts = CreateOptions::new()
         .owner(backup_user.uid)
-        .group(backup_user.gid);
+        .group(backup_user.gid)
+        .perm(nix::sys::stat::Mode::from_bits_truncate(0o700));
     let file_opts = CreateOptions::new()
         .owner(backup_user.uid)
         .group(backup_user.gid);
+    let log_file_opts = file_opts.perm(nix::sys::stat::Mode::from_bits_truncate(0o640));
 
     config = config
         .enable_access_log(
             pbs_buildcfg::API_ACCESS_LOG_FN,
             Some(dir_opts),
-            Some(file_opts),
+            Some(log_file_opts),
             &mut command_sock,
         )?
         .enable_auth_log(
             pbs_buildcfg::API_AUTH_LOG_FN,
             Some(dir_opts),
-            Some(file_opts),
+            Some(log_file_opts),
             &mut command_sock,
         )?;
 
@@ -833,11 +835,12 @@ async fn schedule_task_log_rotate() {
                 let max_size = 32 * 1024 * 1024 - 1;
                 let max_files = 14;
 
+                let log_options = options.perm(nix::sys::stat::Mode::from_bits_truncate(0o640));
                 let mut logrotate = LogRotate::new(
                     pbs_buildcfg::API_ACCESS_LOG_FN,
                     true,
                     Some(max_files),
-                    Some(options),
+                    Some(log_options),
                 )?;
 
                 if logrotate.rotate(max_size)? {
@@ -852,7 +855,7 @@ async fn schedule_task_log_rotate() {
                     pbs_buildcfg::API_AUTH_LOG_FN,
                     true,
                     Some(max_files),
-                    Some(options),
+                    Some(log_options),
                 )?;
 
                 if logrotate.rotate(max_size)? {
