@@ -580,6 +580,8 @@ pub enum DeletableTokenProperty {
         },
     },
     access: {
+        description: "Regenerating the secret of another user's token also requires \
+Permissions.Modify on /access/acl. An API token does not count as its owning user.",
         permission: &Permission::Or(&[
             &Permission::Privilege(&["access", "users"], PRIV_PERMISSIONS_MODIFY, false),
             &Permission::UserParam("userid"),
@@ -597,6 +599,7 @@ pub fn update_token(
     regenerate: Option<bool>,
     delete: Option<Vec<DeletableTokenProperty>>,
     digest: Option<String>,
+    rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Value, Error> {
     let _lock = pbs_config::user::lock_config()?;
 
@@ -604,7 +607,7 @@ pub fn update_token(
 
     pbs_config::detect_modified_configuration_file(digest, &expected_digest)?;
 
-    let tokenid = Authid::from((userid, Some(token_name)));
+    let tokenid = Authid::from((userid.clone(), Some(token_name)));
     let tokenid_string = tokenid.to_string();
 
     let mut data: ApiToken = config.lookup("token", &tokenid_string)?;
@@ -634,7 +637,20 @@ pub fn update_token(
         data.expire = if expire > 0 { Some(expire) } else { None };
     }
 
-    let new_secret = if regenerate.unwrap_or_default() {
+    let regenerate = regenerate.unwrap_or_default();
+
+    let new_secret = if regenerate {
+        let current_auth_id: Authid = rpcenv.get_auth_id().unwrap().parse()?;
+
+        // require ACL-modifying privileges to regenerate "foreign" tokens
+        if current_auth_id != Authid::from(userid) {
+            CachedUserInfo::new()?.check_privs(
+                &current_auth_id,
+                &["access", "acl"],
+                PRIV_PERMISSIONS_MODIFY,
+                false,
+            )?;
+        }
         Some(token_shadow::generate_and_set_secret(&tokenid)?)
     } else {
         None
