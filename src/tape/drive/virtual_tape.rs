@@ -145,24 +145,6 @@ impl VirtualTapeHandle {
         Ok(())
     }
 
-    fn online_media_label_texts(&self) -> Result<Vec<String>, Error> {
-        let mut list = Vec::new();
-        for entry in std::fs::read_dir(&self.path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && path.extension() == Some(std::ffi::OsStr::new("json")) {
-                if let Some(name) = path.file_stem() {
-                    if let Some(name) = name.to_str() {
-                        if let Some(label) = name.strip_prefix("tape-") {
-                            list.push(label.to_string());
-                        }
-                    }
-                }
-            }
-        }
-        Ok(list)
-    }
-
     #[allow(dead_code)]
     fn forward_space_count_files(&mut self, count: usize) -> Result<(), Error> {
         let mut status = self.load_status()?;
@@ -575,6 +557,28 @@ impl MediaChange for VirtualTapeHandle {
         self.status()
     }
 
+    /// List the virtual tapes in the directory of the drive
+    ///
+    /// The default implementation must not be used here: it derives the list from the
+    /// status, and the status gets its slots from this list.
+    fn online_media_label_texts(&mut self) -> Result<Vec<String>, Error> {
+        let mut list = Vec::new();
+        for entry in std::fs::read_dir(&self.path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension() == Some(std::ffi::OsStr::new("json")) {
+                if let Some(name) = path.file_stem() {
+                    if let Some(name) = name.to_str() {
+                        if let Some(label) = name.strip_prefix("tape-") {
+                            list.push(label.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(list)
+    }
+
     fn clean_drive(&mut self) -> Result<MtxStatus, Error> {
         // do nothing
         self.status()
@@ -621,7 +625,7 @@ impl MediaChange for VirtualTapeDrive {
     }
 
     fn online_media_label_texts(&mut self) -> Result<Vec<String>, Error> {
-        let handle = open_virtual_tape_drive(self)?;
+        let mut handle = open_virtual_tape_drive(self)?;
         handle.online_media_label_texts()
     }
 
