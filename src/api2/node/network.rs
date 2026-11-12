@@ -10,10 +10,10 @@ use pbs_api_types::{
 };
 
 use proxmox_network_api::{
-    self as network, BondXmitHashPolicy, CIDR_V4_SCHEMA, CIDR_V6_SCHEMA, IP_V4_SCHEMA,
-    IP_V6_SCHEMA, Interface, LinuxBondMode, NETWORK_INTERFACE_ARRAY_SCHEMA,
-    NETWORK_INTERFACE_LIST_SCHEMA, NETWORK_INTERFACE_NAME_SCHEMA, NetworkConfig,
-    NetworkConfigMethod, NetworkInterfaceType, parse_vlan_id_from_name,
+    self as network, BondXmitHashPolicy, CIDR_V4_SCHEMA, CIDR_V6_SCHEMA, IFUPDOWN2_COMMENT_SCHEMA,
+    IFUPDOWN2_COMMENT6_SCHEMA, IP_V4_SCHEMA, IP_V6_SCHEMA, Interface, LinuxBondMode,
+    NETWORK_INTERFACE_ARRAY_SCHEMA, NETWORK_INTERFACE_LIST_SCHEMA, NETWORK_INTERFACE_NAME_SCHEMA,
+    NetworkConfig, NetworkConfigMethod, NetworkInterfaceType, parse_vlan_id_from_name,
     parse_vlan_raw_device_from_name,
 };
 
@@ -193,13 +193,11 @@ pub fn read_interface(iface: String) -> Result<Value, Error> {
                 optional: true,
             },
             comments: {
-                description: "Comments (inet, may span multiple lines)",
-                type: String,
+                schema: IFUPDOWN2_COMMENT_SCHEMA,
                 optional: true,
             },
             comments6: {
-                description: "Comments (inet5, may span multiple lines)",
-                type: String,
+                schema: IFUPDOWN2_COMMENT6_SCHEMA,
                 optional: true,
             },
             cidr: {
@@ -500,13 +498,11 @@ pub enum DeletableProperty {
                 optional: true,
             },
             comments: {
-                description: "Comments (inet, may span multiple lines)",
-                type: String,
+                schema: IFUPDOWN2_COMMENT_SCHEMA,
                 optional: true,
             },
             comments6: {
-                description: "Comments (inet5, may span multiple lines)",
-                type: String,
+                schema: IFUPDOWN2_COMMENT6_SCHEMA,
                 optional: true,
             },
             cidr: {
