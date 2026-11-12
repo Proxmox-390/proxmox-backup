@@ -152,16 +152,24 @@ fn merge_parameters(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    if let Some(Value::Object(map)) = param {
-        param_list.extend(map.into_iter().map(|(k, v)| {
-            (
-                k,
-                match v {
-                    Value::String(s) => s,
-                    _ => unreachable!(), // we're in the CLI
-                },
-            )
-        }));
+    if let Some(param) = param {
+        let Value::Object(map) = param else {
+            bail!("expected the parameters as an object, got '{param}'");
+        };
+        for (key, value) in map {
+            // the command line parser collects the values of a parameter that is given
+            // more than once in an array
+            let values = match value {
+                Value::Array(values) => values,
+                value => vec![value],
+            };
+            for value in values {
+                let Value::String(text) = value else {
+                    bail!("parameter '{key}': expected a string, got '{value}'");
+                };
+                param_list.push((key.clone(), text));
+            }
+        }
     }
 
     let params = schema.parse_parameter_strings(&param_list, true)?;
@@ -504,4 +512,114 @@ pub fn api_commands() -> CommandLineInterface {
         );
 
     cmd_def.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use proxmox_schema::{ArraySchema, ObjectSchema, StringSchema};
+
+    const PARAMETERS: ObjectSchema = ObjectSchema::new(
+        "Parameters of a made up API call.",
+        &[
+            (
+                "id",
+                false,
+                &StringSchema::new("Part of the path.").schema(),
+            ),
+            ("name", true, &StringSchema::new("A value.").schema()),
+            (
+                "tag",
+                true,
+                &ArraySchema::new("A list.", &StringSchema::new("An item.").schema()).schema(),
+            ),
+        ],
+    );
+
+    /// Parse a command line like the 'api' subcommands do and return what is left for
+    /// the called API method
+    fn cli_param(args: &[&str]) -> Value {
+        let fixed_param = HashMap::from([("method", "get".to_string())]);
+        let (mut param, remaining) = parse_arguments(
+            args,
+            &["api-path"],
+            &fixed_param,
+            API_METHOD_API_CALL.parameters,
+        )
+        .expect("parsing the command line failed");
+        assert!(remaining.is_empty());
+
+        let map = param.as_object_mut().unwrap();
+        map.remove("method");
+        map.remove("api-path");
+        param
+    }
+
+    fn merge(param: Option<Value>) -> Result<Value, Error> {
+        let uri_param = HashMap::from([("id".to_string(), "one".to_string())]);
+        merge_parameters(&uri_param, param, ParameterSchema::from(&PARAMETERS))
+    }
+
+    #[test]
+    fn test_merge_parameters() -> Result<(), Error> {
+        assert_eq!(merge(None)?, json!({ "id": "one" }));
+        assert_eq!(merge(Some(cli_param(&["/path"])))?, json!({ "id": "one" }));
+
+        let param = cli_param(&["/path", "--name", "a", "--tag", "b"]);
+        assert_eq!(
+            merge(Some(param))?,
+            json!({ "id": "one", "name": "a", "tag": ["b"] })
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_parameters_given_more_than_once() -> Result<(), Error> {
+        let param = cli_param(&["/path", "--tag", "a", "--tag", "b", "--tag", "c"]);
+        assert_eq!(param, json!({ "tag": ["a", "b", "c"] }));
+        assert_eq!(
+            merge(Some(param))?,
+            json!({ "id": "one", "tag": ["a", "b", "c"] })
+        );
+
+        // only an array can take more than one value
+        let param = cli_param(&["/path", "--name", "a", "--name", "b"]);
+        let err = merge(Some(param)).expect_err("second value for a string should fail");
+        assert!(
+            err.to_string().contains("'name': duplicate parameter"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_parameters_unexpected_input() {
+        // the command line parser produces none of these, they have to fail without panic
+        for param in [json!(null), json!("a"), json!(["a"])] {
+            let err = merge(Some(param)).expect_err("parameters that are no object should fail");
+            assert!(
+                err.to_string()
+                    .contains("expected the parameters as an object"),
+                "unexpected error: {err}"
+            );
+        }
+
+        for (name, param) in [
+            ("name", json!({ "name": 1 })),
+            ("name", json!({ "name": null })),
+            ("name", json!({ "name": { "a": "b" } })),
+            ("tag", json!({ "tag": ["a", 1] })),
+            ("tag", json!({ "tag": [["a"]] })),
+        ] {
+            let err = merge(Some(param)).expect_err("value that is no string should fail");
+            assert!(
+                err.to_string()
+                    .contains(&format!("parameter '{name}': expected a string")),
+                "unexpected error: {err}"
+            );
+        }
+    }
 }
