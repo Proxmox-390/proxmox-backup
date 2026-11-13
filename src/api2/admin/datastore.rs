@@ -64,7 +64,9 @@ use pbs_datastore::{
     ensure_datastore_is_mounted, task_tracking,
 };
 use pbs_tools::json::required_string_param;
-use proxmox_rest_server::{WorkerTask, formatter, worker_is_active};
+use proxmox_rest_server::{
+    WorkerTask, formatter, upid_read_status, worker_is_active, worker_is_active_local,
+};
 
 use crate::api2::backup::optional_ns_param;
 use crate::api2::node::rrd::create_value_from_rrd;
@@ -1267,20 +1269,36 @@ pub(crate) fn garbage_collection_status_unchecked(
     };
 
     let datastore = DataStore::lookup_datastore(lookup_with(&store, Operation::Read))?;
-    let status_in_memory = datastore.last_gc_status();
+    let mut status_in_memory = datastore.last_gc_status();
 
     let computed_schedule: JobScheduleStatus =
         compute_schedule_status("garbage_collection", &store, info.schedule.as_deref())?;
 
-    if let Some(ref upid) = status_in_memory.upid {
-        if let Some(endtime) = computed_schedule.last_run_endtime {
-            if let Ok(parsed_upid) = upid.parse::<UPID>() {
-                info.duration = Some(endtime - parsed_upid.starttime);
-            }
+    let calc_duration = |starttime: i64, endtime: i64| -> Option<i64> {
+        endtime.checked_sub(starttime).filter(|&d| d >= 0)
+    };
+
+    if let Some(upid) = &computed_schedule.last_run_upid {
+        if let (Some(endtime), Ok(parsed_upid)) =
+            (computed_schedule.last_run_endtime, upid.parse::<UPID>())
+        {
+            info.duration = calc_duration(parsed_upid.starttime, endtime);
         }
 
         info.last_run_endtime = computed_schedule.last_run_endtime;
         info.last_run_state = computed_schedule.last_run_state;
+        status_in_memory.upid = Some(upid.clone());
+    } else if let Some(upid) = &status_in_memory.upid {
+        if let Ok(parsed_upid) = upid.parse::<UPID>() {
+            if !worker_is_active_local(&parsed_upid) {
+                if let Ok(task_state) = upid_read_status(&parsed_upid) {
+                    let endtime = task_state.endtime();
+                    info.duration = calc_duration(parsed_upid.starttime, endtime);
+                    info.last_run_endtime = Some(endtime);
+                    info.last_run_state = Some(task_state.to_string());
+                }
+            }
+        }
     }
 
     info.next_run = computed_schedule.next_run;
