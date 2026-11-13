@@ -183,7 +183,7 @@ impl BackupWriter {
                 .unwrap();
         let response_future = self
             .h2
-            .send_request(request, Some(bytes::Bytes::from(data.clone())))
+            .send_request(request, Some(bytes::Bytes::from(data)))
             .await?;
         Ok(response_future)
     }
