@@ -181,9 +181,11 @@ impl BackupWriter {
         let request =
             H2Client::request_builder("localhost", method, path, param, Some(content_type))
                 .unwrap();
+        // Encoding allocates for the raw chunk size. Drop the excess capacity, as the HTTP/2 stream
+        // can hold on to the body until it is sent.
         let response_future = self
             .h2
-            .send_request(request, Some(bytes::Bytes::from(data)))
+            .send_request(request, Some(bytes::Bytes::from(data.into_boxed_slice())))
             .await?;
         Ok(response_future)
     }
