@@ -1,3 +1,27 @@
+rust-proxmox-backup (4.2.12-1) trixie; urgency=medium
+
+  * api: network: reject interface comments with Mako template tags that
+    start a Python block. If python3-mako is installed, ifupdown2 evaluates
+    them, which would allow executing arbitrary code. Also write carriage
+    returns in interface comments as separate comment lines.
+
+  * client: backup writer: hand encoded chunks over for upload without
+    copying them, saving an allocation and copy of up to 4 MiB per chunk for
+    every VM backup to a Proxmox Backup Server.
+
+  * daemons: on stop, stop accepting connections, let open requests finish
+    and wait for running tasks, up to the systemd stop timeout, instead of
+    exiting at once. Also fix reloads that could hang or get lost, for
+    example when requested right after the start.
+
+  * api: tokens: regenerating the secret of another user's API token now also
+    requires 'Permissions.Modify' on '/access/acl', the privilege needed for
+    modifying any ACL. Before, 'Permissions.Modify' on '/access/users' was
+    enough, which could hand out a token with more privileges than the caller
+    had.
+
+ -- Proxmox Support Team <support@proxmox.com>  Sat, 14 Nov 2026 21:01:26 +0100
+
 rust-proxmox-backup (4.2.11-1) trixie; urgency=medium
 
   * fix #6990: sync: drop the verify state of snapshots on push and on pull
