@@ -137,10 +137,14 @@ fn migrate_leftover_notifications() -> Result<(), Error> {
 
     for entry in read_dir.flatten() {
         if let Some((name, ext)) = entry.file_name().to_string_lossy().split_once(".") {
-            if ext == "json" && Uuid::parse_str(name).is_ok() {
+            if ext != "json" {
+                continue;
+            }
+
+            if let Ok(uuid) = Uuid::parse_str(name) {
                 let path = entry.path();
 
-                if let Err(err) = migrate_single_notification(&path) {
+                if let Err(err) = migrate_single_notification(&path, &uuid) {
                     log::error!(
                         "failed to migrate notification at '{p}' to new queue: {err:#}",
                         p = path.display()
@@ -153,17 +157,10 @@ fn migrate_leftover_notifications() -> Result<(), Error> {
     Ok(())
 }
 
-fn migrate_single_notification(path: &Path) -> Result<(), Error> {
-    let bytes = std::fs::read(path)?;
-
-    // Technically, we don't need to parse, but this is just to ensure that
-    // we don't migrate over something that is not understood by the
-    // notification worker.
-    let notification: Notification = serde_json::from_slice(&bytes)?;
-
-    let uuid = notification.id().clone();
-
-    // Manually move the notification into the new queue directory.
+fn migrate_single_notification(path: &Path, uuid: &Uuid) -> Result<(), Error> {
+    // The file is not read here, as the backup user owns the spool directory and could have put a
+    // symlink or a FIFO there. The queue worker opens queued files safely and sets aside those
+    // that are not valid notifications.
     //
     // Use a manual rename instead of resubmitting to ensure atomicity.
     std::fs::rename(
