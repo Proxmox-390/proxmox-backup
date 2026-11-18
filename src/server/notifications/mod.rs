@@ -1,10 +1,13 @@
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use anyhow::Error;
+use anyhow::{Error, bail, format_err};
 use const_format::concatcp;
 use nix::sys::stat::Mode;
+use nix::unistd::{Gid, Uid};
 
 use proxmox_notify::context::pbs::PBSContext;
 use proxmox_notify::queue::{QueueConsumer, QueueSubmitter, QueueWorker};
@@ -48,14 +51,47 @@ pub fn create_notification_dirs() -> Result<(), Error> {
 
     create_path(NOTIFICATION_BASE_DIR, None, Some(opts))?;
 
-    // The queue is writable by anybody in the 'backup' group, the sticky bit keeps them from
-    // removing or replacing each other's notifications.
-    let opts = CreateOptions::new()
-        .owner(proxmox_product_config::get_priv_user().uid)
-        .group(backup_user.gid)
-        .perm(Mode::from_bits_truncate(0o3770));
+    ensure_queue_dir(proxmox_product_config::get_priv_user().uid, backup_user.gid)
+}
 
-    proxmox_sys::fs::ensure_dir_exists(QUEUE_DIR, &opts, true)?;
+/// Make sure that the queue directory exists, is owned by `uid` and `gid` and has mode 3770.
+///
+/// The queue is writable by anybody in the 'backup' group, the sticky bit keeps them from removing
+/// or replacing each other's notifications. As the parent directory belongs to the backup user,
+/// the queue directory is opened without following symlinks and fixed through that handle.
+fn ensure_queue_dir(uid: Uid, gid: Gid) -> Result<(), Error> {
+    const QUEUE_DIR_MODE: u32 = 0o3770;
+
+    let created = match nix::unistd::mkdir(QUEUE_DIR, Mode::from_bits_truncate(0o700)) {
+        Ok(()) => true,
+        Err(nix::errno::Errno::EEXIST) => false,
+        Err(err) => bail!("unable to create {QUEUE_DIR} - {err}"),
+    };
+
+    let dir = std::fs::File::options()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(QUEUE_DIR)
+        .map_err(|err| format_err!("unable to open {QUEUE_DIR} - {err}"))?;
+    let metadata = dir.metadata()?;
+
+    let wrong_owner = metadata.uid() != uid.as_raw() || metadata.gid() != gid.as_raw();
+    let wrong_mode = metadata.mode() & 0o7777 != QUEUE_DIR_MODE;
+
+    if !created && (wrong_owner || wrong_mode) {
+        log::warn!("fixing unexpected owner or mode of {QUEUE_DIR}");
+    }
+
+    if wrong_owner {
+        nix::unistd::fchown(dir.as_raw_fd(), Some(uid), Some(gid))
+            .map_err(|err| format_err!("unable to set owner of {QUEUE_DIR} - {err}"))?;
+    }
+
+    // Set the mode after the owner, as changing the owner can clear the setgid bit.
+    if wrong_owner || wrong_mode {
+        nix::sys::stat::fchmod(dir.as_raw_fd(), Mode::from_bits_truncate(QUEUE_DIR_MODE))
+            .map_err(|err| format_err!("unable to set mode of {QUEUE_DIR} - {err}"))?;
+    }
 
     Ok(())
 }
