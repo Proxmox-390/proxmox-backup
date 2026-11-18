@@ -139,6 +139,10 @@ const proxmoxOnlineHelpInfo = {
     "link": "/docs/using-the-installer.html#advanced-zfs-options",
     "title": "Advanced ZFS Configuration Options"
   },
+  "advanced-network-options": {
+    "link": "/docs/using-the-installer.html#advanced-network-options",
+    "title": "Advanced Network Configuration Options"
+  },
   "nomodeset-kernel-param": {
     "link": "/docs/using-the-installer.html#nomodeset-kernel-param",
     "title": "Adding the ``nomodeset`` Kernel Parameter"
@@ -255,6 +259,10 @@ const proxmoxOnlineHelpInfo = {
     "link": "/docs/network-management.html#sysadmin-traffic-control",
     "title": "Traffic Control"
   },
+  "network-override-device-names": {
+    "link": "/docs/network-management.html#network-override-device-names",
+    "title": "Overriding network device names"
+  },
   "notifications": {
     "link": "/docs/notifications.html#notifications",
     "title": "Notifications"
@@ -282,6 +290,10 @@ const proxmoxOnlineHelpInfo = {
   "notification-matchers": {
     "link": "/docs/notifications.html#notification-matchers",
     "title": "Notification Matchers"
+  },
+  "notification-match-expression-reference": {
+    "link": "/docs/notifications.html#notification-match-expression-reference",
+    "title": "Match Expression Reference"
   },
   "notification-events": {
     "link": "/docs/notifications.html#notification-events",
