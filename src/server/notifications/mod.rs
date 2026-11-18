@@ -256,7 +256,9 @@ pub fn send_verify_status(
         NotificationMode::LegacySendmail => {
             let notify = notify.verify.unwrap_or(Notify::Always);
 
-            if notify == Notify::Never || (result.is_ok() && notify == Notify::Error) {
+            if notify == Notify::Never
+                || (matches!(result, Ok(errors) if errors.is_empty()) && notify == Notify::Error)
+            {
                 return Ok(());
             }
 
