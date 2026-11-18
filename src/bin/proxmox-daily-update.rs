@@ -1,7 +1,6 @@
 use anyhow::Error;
 use serde_json::json;
 
-use proxmox_notify::context::pbs::PBS_CONTEXT;
 use proxmox_router::{ApiHandler, RpcEnvironment, cli::*};
 use proxmox_subscription::SubscriptionStatus;
 
@@ -128,8 +127,6 @@ async fn run(rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     );
     proxmox_rest_server::register_task_control_commands(&mut command_sock)?;
     command_sock.spawn(proxmox_rest_server::last_worker_future())?;
-
-    proxmox_notify::context::set_context(&PBS_CONTEXT);
 
     proxmox_acme_api::init(configdir!("/acme"), false)?;
 

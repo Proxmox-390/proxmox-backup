@@ -3,6 +3,7 @@ use anyhow::{Error, bail};
 use proxmox_schema::ApiType;
 use proxmox_schema::format::dump_enum_properties;
 use proxmox_section_config::dump_section_config;
+use proxmox_section_config::typed::ApiSectionDataEntry;
 
 use pbs_api_types::PRIVILEGES;
 
@@ -29,9 +30,11 @@ fn main() -> Result<(), Error> {
             "apidata.js" => generate_api_tree(),
             "datastore.cfg" => dump_section_config(&pbs_config::datastore::CONFIG),
             "domains.cfg" => dump_section_config(&pbs_config::domains::CONFIG),
-            "notifications.cfg" => dump_section_config(proxmox_notify::config::config_parser()),
+            "notifications.cfg" => {
+                dump_section_config(proxmox_notify::ConfigEntity::section_config())
+            }
             "notifications-priv.cfg" => {
-                dump_section_config(proxmox_notify::config::private_config_parser())
+                dump_section_config(proxmox_notify::PrivateConfigEntity::section_config())
             }
             "tape.cfg" => dump_section_config(&pbs_config::drive::CONFIG),
             "tape-job.cfg" => dump_section_config(&pbs_config::tape_job::CONFIG),

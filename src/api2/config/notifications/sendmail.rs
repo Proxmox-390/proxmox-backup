@@ -1,14 +1,16 @@
 use anyhow::Error;
 use serde_json::Value;
 
-use proxmox_notify::endpoints::sendmail::{
-    DeleteableSendmailProperty, SendmailConfig, SendmailConfigUpdater,
+use proxmox_config_digest::ConfigDigest;
+use proxmox_notify::api_types::{
+    DeletableSendmailProperty, ENTITY_NAME_SCHEMA, SendmailConfig, SendmailConfigUpdater,
 };
-use proxmox_notify::schema::ENTITY_NAME_SCHEMA;
 use proxmox_router::{Permission, Router, RpcEnvironment};
 use proxmox_schema::api;
 
 use pbs_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY, PROXMOX_CONFIG_DIGEST_SCHEMA};
+
+use crate::server;
 
 #[api(
     protected: true,
@@ -29,7 +31,7 @@ pub fn list_endpoints(
     _param: Value,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Vec<SendmailConfig>, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
 
     let endpoints = proxmox_notify::api::sendmail::get_endpoints(&config)?;
 
@@ -55,10 +57,10 @@ pub fn get_endpoint(
     name: String,
     rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<SendmailConfig, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
     let endpoint = proxmox_notify::api::sendmail::get_endpoint(&config, &name)?;
 
-    rpcenv["digest"] = hex::encode(config.digest()).into();
+    rpcenv["digest"] = config.digest().to_hex().into();
 
     Ok(endpoint)
 }
@@ -83,7 +85,7 @@ pub fn add_endpoint(
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::sendmail::add_endpoint(&mut config, endpoint)?;
 
@@ -107,7 +109,7 @@ pub fn add_endpoint(
                 type: Array,
                 optional: true,
                 items: {
-                    type: DeleteableSendmailProperty,
+                    type: DeletableSendmailProperty,
                 }
             },
             digest: {
@@ -124,20 +126,19 @@ pub fn add_endpoint(
 pub fn update_endpoint(
     name: String,
     updater: SendmailConfigUpdater,
-    delete: Option<Vec<DeleteableSendmailProperty>>,
-    digest: Option<String>,
+    delete: Option<Vec<DeletableSendmailProperty>>,
+    digest: Option<ConfigDigest>,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
-    let digest = digest.map(hex::decode).transpose()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::sendmail::update_endpoint(
         &mut config,
         &name,
         updater,
         delete.as_deref(),
-        digest.as_deref(),
+        digest,
     )?;
 
     pbs_config::notifications::save_config(config)?;
@@ -160,7 +161,7 @@ pub fn update_endpoint(
 /// Delete sendmail endpoint.
 pub fn delete_endpoint(name: String, _rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     proxmox_notify::api::sendmail::delete_endpoint(&mut config, &name)?;
 
     pbs_config::notifications::save_config(config)?;

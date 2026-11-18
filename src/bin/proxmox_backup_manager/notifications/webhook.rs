@@ -1,7 +1,7 @@
 use anyhow::Error;
 use serde_json::Value;
 
-use proxmox_notify::schema::ENTITY_NAME_SCHEMA;
+use proxmox_notify::api_types::ENTITY_NAME_SCHEMA;
 use proxmox_router::{ApiHandler, RpcEnvironment, cli::*};
 use proxmox_schema::api;
 

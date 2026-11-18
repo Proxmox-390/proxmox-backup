@@ -77,7 +77,6 @@ async fn run() -> Result<(), Error> {
     let _ = csrf_secret(); // load with lazy_static
 
     proxmox_backup::auth_helpers::setup_auth_context(true);
-    proxmox_backup::server::notifications::init()?;
     let mut command_sock = proxmox_daemon::command_socket::CommandSocket::new(backup_user.gid);
 
     proxmox_acme_api::init(configdir!("/acme"), true)?;

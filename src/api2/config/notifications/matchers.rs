@@ -1,12 +1,16 @@
 use anyhow::Error;
 use serde_json::Value;
 
-use proxmox_notify::matcher::{DeleteableMatcherProperty, MatcherConfig, MatcherConfigUpdater};
-use proxmox_notify::schema::ENTITY_NAME_SCHEMA;
+use proxmox_config_digest::ConfigDigest;
+use proxmox_notify::api_types::{
+    DeletableMatcherProperty, ENTITY_NAME_SCHEMA, MatcherConfig, MatcherConfigUpdater,
+};
 use proxmox_router::{Permission, Router, RpcEnvironment};
 use proxmox_schema::api;
 
 use pbs_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY, PROXMOX_CONFIG_DIGEST_SCHEMA};
+
+use crate::server;
 
 #[api(
     protected: true,
@@ -27,7 +31,7 @@ pub fn list_matchers(
     _param: Value,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Vec<MatcherConfig>, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
 
     let matchers = proxmox_notify::api::matcher::get_matchers(&config)?;
 
@@ -59,7 +63,7 @@ pub fn get_matcher(
     migrate_to_expression: bool,
     rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<MatcherConfig, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
 
     let matcher = if migrate_to_expression {
         proxmox_notify::api::matcher::get_matcher_as_expression(&config, &name)?
@@ -67,7 +71,7 @@ pub fn get_matcher(
         proxmox_notify::api::matcher::get_matcher(&config, &name)?
     };
 
-    rpcenv["digest"] = hex::encode(config.digest()).into();
+    rpcenv["digest"] = config.digest().to_hex().into();
 
     Ok(matcher)
 }
@@ -89,7 +93,7 @@ pub fn get_matcher(
 /// Add a new notification matcher.
 pub fn add_matcher(matcher: MatcherConfig, _rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::matcher::add_matcher(&mut config, matcher)?;
 
@@ -113,7 +117,7 @@ pub fn add_matcher(matcher: MatcherConfig, _rpcenv: &mut dyn RpcEnvironment) -> 
                 type: Array,
                 optional: true,
                 items: {
-                    type: DeleteableMatcherProperty,
+                    type: DeletableMatcherProperty,
                 }
             },
             digest: {
@@ -130,20 +134,19 @@ pub fn add_matcher(matcher: MatcherConfig, _rpcenv: &mut dyn RpcEnvironment) -> 
 pub fn update_matcher(
     name: String,
     updater: MatcherConfigUpdater,
-    delete: Option<Vec<DeleteableMatcherProperty>>,
-    digest: Option<String>,
+    delete: Option<Vec<DeletableMatcherProperty>>,
+    digest: Option<ConfigDigest>,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
-    let digest = digest.map(hex::decode).transpose()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::matcher::update_matcher(
         &mut config,
         &name,
         updater,
         delete.as_deref(),
-        digest.as_deref(),
+        digest,
     )?;
 
     pbs_config::notifications::save_config(config)?;
@@ -166,7 +169,7 @@ pub fn update_matcher(
 /// Delete notification matcher.
 pub fn delete_matcher(name: String, _rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     proxmox_notify::api::matcher::delete_matcher(&mut config, &name)?;
 
     pbs_config::notifications::save_config(config)?;

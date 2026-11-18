@@ -1,15 +1,17 @@
 use anyhow::Error;
 use serde_json::Value;
 
-use proxmox_notify::endpoints::smtp::{
-    DeleteableSmtpProperty, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
+use proxmox_config_digest::ConfigDigest;
+use proxmox_notify::api_types::{
+    DeletableSmtpProperty, ENTITY_NAME_SCHEMA, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
     SmtpPrivateConfigUpdater,
 };
-use proxmox_notify::schema::ENTITY_NAME_SCHEMA;
 use proxmox_router::{Permission, Router, RpcEnvironment};
 use proxmox_schema::api;
 
 use pbs_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY, PROXMOX_CONFIG_DIGEST_SCHEMA};
+
+use crate::server;
 
 #[api(
     protected: true,
@@ -30,7 +32,7 @@ pub fn list_endpoints(
     _param: Value,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Vec<SmtpConfig>, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
 
     let endpoints = proxmox_notify::api::smtp::get_endpoints(&config)?;
 
@@ -53,10 +55,10 @@ pub fn list_endpoints(
 )]
 /// Get a smtp endpoint.
 pub fn get_endpoint(name: String, rpcenv: &mut dyn RpcEnvironment) -> Result<SmtpConfig, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
     let endpoint = proxmox_notify::api::smtp::get_endpoint(&config, &name)?;
 
-    rpcenv["digest"] = hex::encode(config.digest()).into();
+    rpcenv["digest"] = config.digest().to_hex().into();
 
     Ok(endpoint)
 }
@@ -86,7 +88,7 @@ pub fn add_endpoint(
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     let private_endpoint_config = SmtpPrivateConfig {
         name: endpoint.name.clone(),
         password,
@@ -118,7 +120,7 @@ pub fn add_endpoint(
                 type: Array,
                 optional: true,
                 items: {
-                    type: DeleteableSmtpProperty,
+                    type: DeletableSmtpProperty,
                 }
             },
             digest: {
@@ -136,13 +138,12 @@ pub fn update_endpoint(
     name: String,
     updater: SmtpConfigUpdater,
     password: Option<String>,
-    delete: Option<Vec<DeleteableSmtpProperty>>,
-    digest: Option<String>,
+    delete: Option<Vec<DeletableSmtpProperty>>,
+    digest: Option<ConfigDigest>,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
-    let digest = digest.map(hex::decode).transpose()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::smtp::update_endpoint(
         &mut config,
@@ -150,7 +151,7 @@ pub fn update_endpoint(
         updater,
         SmtpPrivateConfigUpdater { password },
         delete.as_deref(),
-        digest.as_deref(),
+        digest,
     )?;
 
     pbs_config::notifications::save_config(config)?;
@@ -173,7 +174,7 @@ pub fn update_endpoint(
 /// Delete smtp endpoint.
 pub fn delete_endpoint(name: String, _rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     proxmox_notify::api::smtp::delete_endpoint(&mut config, &name)?;
 
     pbs_config::notifications::save_config(config)?;

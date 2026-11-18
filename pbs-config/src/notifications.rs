@@ -22,19 +22,23 @@ pub fn lock_config() -> Result<BackupLockGuard, Error> {
 }
 
 /// Load notification config.
-pub fn config() -> Result<Config, Error> {
+pub fn config(context: &proxmox_notify::Context) -> Result<Config, Error> {
     let content =
         proxmox_sys::fs::file_read_optional_string(NOTIFICATION_CONFIG_PATH)?.unwrap_or_default();
 
     let priv_content = proxmox_sys::fs::file_read_optional_string(NOTIFICATION_PRIV_CONFIG_PATH)?
         .unwrap_or_default();
 
-    Ok(Config::new(&content, &priv_content)?)
+    Ok(Config::parse_section_config(
+        &content,
+        &priv_content,
+        Some(context.default_config()),
+    )?)
 }
 
 /// Save notification config.
 pub fn save_config(config: Config) -> Result<(), Error> {
-    let (cfg, priv_cfg) = config.write()?;
+    let (cfg, priv_cfg) = config.to_section_config()?;
     replace_privileged_config(NOTIFICATION_CONFIG_PATH, cfg.as_bytes())?;
     proxmox_product_config::replace_secret_config(
         NOTIFICATION_PRIV_CONFIG_PATH,

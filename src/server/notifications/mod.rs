@@ -1,12 +1,13 @@
-use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::Error;
 use const_format::concatcp;
 use nix::unistd::Uid;
 
-use proxmox_notify::context::pbs::PBS_CONTEXT;
+use proxmox_notify::context::pbs::PBSContext;
+use proxmox_notify::{Context, EmailRecipient, Notification, Recipient, Severity};
 use proxmox_schema::ApiType;
 use proxmox_sys::fs::{CreateOptions, create_path};
 
@@ -15,8 +16,6 @@ use pbs_api_types::{
     APTUpdateInfo, DataStoreConfig, DatastoreNotify, GarbageCollectionStatus, NotificationMode,
     Notify, SyncJobConfig, TapeBackupJobSetup, User, Userid, VerificationJobConfig,
 };
-use proxmox_notify::endpoints::sendmail::{SendmailConfig, SendmailEndpoint};
-use proxmox_notify::{Endpoint, Notification, Severity};
 
 const SPOOL_DIR: &str = concatcp!(pbs_buildcfg::PROXMOX_BACKUP_STATE_DIR, "/notifications");
 
@@ -29,10 +28,11 @@ use template_data::{
     TapeLoadTemplateData, VerifyErrTemplateData, VerifyOkTemplateData,
 };
 
-/// Initialize the notification system by setting context in proxmox_notify
-pub fn init() -> Result<(), Error> {
-    proxmox_notify::context::set_context(&PBS_CONTEXT);
-    Ok(())
+static CONTEXT: OnceLock<Context> = OnceLock::new();
+
+/// Get a reference to the static notification context for PBS.
+pub fn context() -> &'static Context {
+    CONTEXT.get_or_init(|| Context::new(PBSContext))
 }
 
 /// Create the directory which will be used to temporarily store notifications
@@ -78,10 +78,12 @@ async fn send_queued_notifications() -> Result<(), Error> {
     // Make sure that we send the oldest notification first
     notifications.sort_unstable_by_key(|n| n.timestamp());
 
+    let context = context();
+
     let res = tokio::task::spawn_blocking(move || {
-        let config = pbs_config::notifications::config()?;
+        let config = pbs_config::notifications::config(context)?;
         for notification in notifications {
-            if let Err(err) = proxmox_notify::api::common::send(&config, &notification) {
+            if let Err(err) = proxmox_notify::send(context, &config, &notification) {
                 log::error!("failed to send notification: {err}");
             }
         }
@@ -111,9 +113,11 @@ pub async fn notification_worker() {
 }
 
 fn send_notification(notification: Notification) -> Result<(), Error> {
+    let context = context();
+
     if nix::unistd::ROOT == Uid::current() {
-        let config = pbs_config::notifications::config()?;
-        proxmox_notify::api::common::send(&config, &notification)?;
+        let config = pbs_config::notifications::config(context)?;
+        proxmox_notify::send(context, &config, &notification)?;
     } else {
         let ser = serde_json::to_vec(&notification)?;
         let path = Path::new(SPOOL_DIR).join(format!("{id}.json", id = notification.id()));
@@ -125,19 +129,6 @@ fn send_notification(notification: Notification) -> Result<(), Error> {
         proxmox_sys::fs::replace_file(path, &ser, opts, true)?;
         log::info!("queued notification (id={id})", id = notification.id())
     }
-
-    Ok(())
-}
-
-fn send_sendmail_legacy_notification(notification: Notification, email: &str) -> Result<(), Error> {
-    let endpoint = SendmailEndpoint {
-        config: SendmailConfig {
-            mailto: vec![email.into()],
-            ..Default::default()
-        },
-    };
-
-    endpoint.send(&notification)?;
 
     Ok(())
 }
@@ -158,50 +149,33 @@ pub fn send_gc_status(
     status: &GarbageCollectionStatus,
     result: &Result<(), Error>,
 ) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("datastore".into(), datastore.into()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "gc".into()),
-    ]);
+    let Some(recipient) =
+        datastore_notification_recipient(datastore, |n| n.gc, Notify::Always, result.is_ok())
+    else {
+        return Ok(());
+    };
 
-    let notification = match result {
+    let builder = match result {
         Ok(()) => {
             let template_data = GcOkTemplateData::new(datastore.to_string(), status);
-            Notification::from_template(
-                Severity::Info,
-                "gc-ok",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("gc-ok", serde_json::to_value(template_data)?)
+                .severity(Severity::Info)
         }
         Err(err) => {
             let template_data = GcErrTemplateData::new(datastore.to_string(), format!("{err:#}"));
-            Notification::from_template(
-                Severity::Error,
-                "gc-err",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("gc-err", serde_json::to_value(template_data)?)
+                .severity(Severity::Error)
         }
     };
 
-    let (email, notify, mode) = lookup_datastore_notify_settings(datastore);
-    match mode {
-        NotificationMode::LegacySendmail => {
-            let notify = notify.gc.unwrap_or(Notify::Always);
+    let notification = builder
+        .field("type", "gc")
+        .field("datastore", datastore)
+        .field("hostname", proxmox_sys::nodename())
+        .recipient(recipient)
+        .build()?;
 
-            if notify == Notify::Never || (result.is_ok() && notify == Notify::Error) {
-                return Ok(());
-            }
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        NotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
-    }
+    send_notification(notification)?;
 
     Ok(())
 }
@@ -210,14 +184,16 @@ pub fn send_verify_status(
     job: VerificationJobConfig,
     result: &Result<Vec<String>, Error>,
 ) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("job-id".into(), job.id.clone()),
-        ("datastore".into(), job.store.clone()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "verify".into()),
-    ]);
+    // Failed snapshots are reported via `Ok`, but still count as an error for the notify setting.
+    let is_ok = matches!(result, Ok(errors) if errors.is_empty());
 
-    let notification = match result {
+    let Some(recipient) =
+        datastore_notification_recipient(&job.store, |n| n.verify, Notify::Always, is_ok)
+    else {
+        return Ok(());
+    };
+
+    let builder = match result {
         Err(_) => {
             // aborted job - do not send any notification
             return Ok(());
@@ -228,12 +204,8 @@ pub fn send_verify_status(
                 datastore: job.store.clone(),
                 job_id: job.id.clone(),
             };
-            Notification::from_template(
-                Severity::Info,
-                "verify-ok",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("verify-ok", serde_json::to_value(template_data)?)
+                .severity(Severity::Info)
         }
         Ok(errors) => {
             let template_data = VerifyErrTemplateData {
@@ -242,34 +214,20 @@ pub fn send_verify_status(
                 job_id: job.id.clone(),
                 failed_snapshot_list: errors.clone(),
             };
-            Notification::from_template(
-                Severity::Error,
-                "verify-err",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("verify-err", serde_json::to_value(template_data)?)
+                .severity(Severity::Error)
         }
     };
 
-    let (email, notify, mode) = lookup_datastore_notify_settings(&job.store);
-    match mode {
-        NotificationMode::LegacySendmail => {
-            let notify = notify.verify.unwrap_or(Notify::Always);
+    let notification = builder
+        .field("type", "verify")
+        .field("job-id", job.id)
+        .field("datastore", job.store)
+        .field("hostname", proxmox_sys::nodename())
+        .recipient(recipient)
+        .build()?;
 
-            if notify == Notify::Never
-                || (matches!(result, Ok(errors) if errors.is_empty()) && notify == Notify::Error)
-            {
-                return Ok(());
-            }
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        NotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
-    }
+    send_notification(notification)?;
 
     Ok(())
 }
@@ -279,14 +237,13 @@ pub fn send_prune_status(
     jobname: &str,
     result: &Result<(), Error>,
 ) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("job-id".into(), jobname.to_string()),
-        ("datastore".into(), store.into()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "prune".into()),
-    ]);
+    let Some(recipient) =
+        datastore_notification_recipient(store, |n| n.prune, Notify::Error, result.is_ok())
+    else {
+        return Ok(());
+    };
 
-    let notification = match result {
+    let builder = match result {
         Ok(()) => {
             let template_data = PruneOkTemplateData {
                 common: CommonData::new(),
@@ -294,12 +251,8 @@ pub fn send_prune_status(
                 job_id: jobname.to_string(),
             };
 
-            Notification::from_template(
-                Severity::Info,
-                "prune-ok",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("prune-ok", serde_json::to_value(template_data)?)
+                .severity(Severity::Info)
         }
         Err(err) => {
             let template_data = PruneErrTemplateData {
@@ -309,45 +262,32 @@ pub fn send_prune_status(
                 error: format!("{err:#}"),
             };
 
-            Notification::from_template(
-                Severity::Error,
-                "prune-err",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("prune-err", serde_json::to_value(template_data)?)
+                .severity(Severity::Error)
         }
     };
 
-    let (email, notify, mode) = lookup_datastore_notify_settings(store);
-    match mode {
-        NotificationMode::LegacySendmail => {
-            let notify = notify.prune.unwrap_or(Notify::Error);
+    let notification = builder
+        .field("type", "prune")
+        .field("job-id", jobname)
+        .field("datastore", store)
+        .field("hostname", proxmox_sys::nodename())
+        .recipient(recipient)
+        .build()?;
 
-            if notify == Notify::Never || (result.is_ok() && notify == Notify::Error) {
-                return Ok(());
-            }
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        NotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
-    }
+    send_notification(notification)?;
 
     Ok(())
 }
 
 pub fn send_sync_status(job: &SyncJobConfig, result: &Result<(), Error>) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("job-id".into(), job.id.clone()),
-        ("datastore".into(), job.store.clone()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "sync".into()),
-    ]);
+    let Some(recipient) =
+        datastore_notification_recipient(&job.store, |n| n.sync, Notify::Always, result.is_ok())
+    else {
+        return Ok(());
+    };
 
-    let notification = match result {
+    let builder = match result {
         Ok(()) => {
             let template_data = SyncOkTemplateData {
                 common: CommonData::new(),
@@ -356,12 +296,8 @@ pub fn send_sync_status(job: &SyncJobConfig, result: &Result<(), Error>) -> Resu
                 remote: job.remote.clone(),
                 remote_datastore: job.remote_store.clone(),
             };
-            Notification::from_template(
-                Severity::Info,
-                "sync-ok",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("sync-ok", serde_json::to_value(template_data)?)
+                .severity(Severity::Info)
         }
         Err(err) => {
             let template_data = SyncErrTemplateData {
@@ -372,32 +308,20 @@ pub fn send_sync_status(job: &SyncJobConfig, result: &Result<(), Error>) -> Resu
                 remote_datastore: job.remote_store.clone(),
                 error: format!("{err:#}"),
             };
-            Notification::from_template(
-                Severity::Error,
-                "sync-err",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("sync-err", serde_json::to_value(template_data)?)
+                .severity(Severity::Error)
         }
     };
 
-    let (email, notify, mode) = lookup_datastore_notify_settings(&job.store);
-    match mode {
-        NotificationMode::LegacySendmail => {
-            let notify = notify.sync.unwrap_or(Notify::Always);
+    let notification = builder
+        .field("type", "sync")
+        .field("job-id", &job.id)
+        .field("datastore", &job.store)
+        .field("hostname", proxmox_sys::nodename())
+        .recipient(recipient)
+        .build()?;
 
-            if notify == Notify::Never || (result.is_ok() && notify == Notify::Error) {
-                return Ok(());
-            }
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        NotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
-    }
+    send_notification(notification)?;
 
     Ok(())
 }
@@ -408,20 +332,13 @@ pub fn send_tape_backup_status(
     result: &Result<(), Error>,
     summary: TapeBackupJobSummary,
 ) -> Result<(), Error> {
-    let mut metadata = HashMap::from([
-        ("datastore".into(), job.store.clone()),
-        ("media-pool".into(), job.pool.clone()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "tape-backup".into()),
-    ]);
-
-    if let Some(id) = id {
-        metadata.insert("job-id".into(), id.into());
-    }
+    let Some(recipient) = tape_notification_recipient(&TapeNotificationMode::from(job)) else {
+        return Ok(());
+    };
 
     let duration = summary.duration.as_secs();
 
-    let notification = match result {
+    let mut builder = match result {
         Ok(()) => {
             let template_data = TapeBackupOkTemplateData {
                 common: CommonData::new(),
@@ -434,12 +351,8 @@ pub fn send_tape_backup_status(
                 snapshot_list: summary.snapshot_list,
             };
 
-            Notification::from_template(
-                Severity::Info,
-                "tape-backup-ok",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("tape-backup-ok", serde_json::to_value(template_data)?)
+                .severity(Severity::Info)
         }
         Err(err) => {
             let template_data = TapeBackupErrTemplateData {
@@ -454,29 +367,24 @@ pub fn send_tape_backup_status(
                 error: format!("{err:#}"),
             };
 
-            Notification::from_template(
-                Severity::Error,
-                "tape-backup-err",
-                serde_json::to_value(template_data)?,
-                metadata,
-            )
+            Notification::template_builder("tape-backup-err", serde_json::to_value(template_data)?)
+                .severity(Severity::Error)
         }
     };
 
-    let mode = TapeNotificationMode::from(job);
-
-    match &mode {
-        TapeNotificationMode::LegacySendmail { notify_user } => {
-            let email = lookup_user_email(notify_user);
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        TapeNotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
+    if let Some(id) = id {
+        builder = builder.field("job-id", id);
     }
+
+    let notification = builder
+        .field("type", "tape-backup")
+        .field("datastore", &job.store)
+        .field("media-pool", &job.pool)
+        .field("hostname", proxmox_sys::nodename())
+        .recipient(recipient)
+        .build()?;
+
+    send_notification(notification)?;
 
     Ok(())
 }
@@ -489,10 +397,9 @@ pub fn send_load_media_notification(
     label_text: &str,
     reason: Option<String>,
 ) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "tape-load".into()),
-    ]);
+    let Some(recipient) = tape_notification_recipient(mode) else {
+        return Ok(());
+    };
 
     let device_type = if changer { "changer" } else { "drive" };
 
@@ -505,45 +412,28 @@ pub fn send_load_media_notification(
         tape_label: label_text.into(),
     };
 
-    let notification = Notification::from_template(
-        Severity::Notice,
-        "tape-load",
-        serde_json::to_value(template_data)?,
-        metadata,
-    );
+    let notification =
+        Notification::template_builder("tape-load", serde_json::to_value(template_data)?)
+            .severity(Severity::Notice)
+            .field("type", "tape-load")
+            .field("hostname", proxmox_sys::nodename())
+            .recipient(recipient)
+            .build()?;
 
-    match mode {
-        TapeNotificationMode::LegacySendmail { notify_user } => {
-            let email = lookup_user_email(notify_user);
-
-            if let Some(email) = email {
-                send_sendmail_legacy_notification(notification, &email)?;
-            }
-        }
-        TapeNotificationMode::NotificationSystem => {
-            send_notification(notification)?;
-        }
-    }
+    send_notification(notification)?;
 
     Ok(())
 }
 
 pub fn send_updates_available(updates: &[&APTUpdateInfo]) -> Result<(), Error> {
-    let hostname = proxmox_sys::nodename().to_string();
-
-    let metadata = HashMap::from([
-        ("hostname".into(), hostname),
-        ("type".into(), "package-updates".into()),
-    ]);
-
     let template_data = PackageUpdatesTemplateData::new(updates);
 
-    let notification = Notification::from_template(
-        Severity::Info,
-        "package-updates",
-        serde_json::to_value(template_data)?,
-        metadata,
-    );
+    let notification =
+        Notification::template_builder("package-updates", serde_json::to_value(template_data)?)
+            .severity(Severity::Info)
+            .field("type", "package-updates")
+            .field("hostname", proxmox_sys::nodename())
+            .build()?;
 
     send_notification(notification)?;
     Ok(())
@@ -556,22 +446,17 @@ pub fn send_certificate_renewal_mail(result: &Result<(), Error>) -> Result<(), E
         _ => return Ok(()),
     };
 
-    let metadata = HashMap::from([
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "acme".into()),
-    ]);
-
     let template_data = AcmeErrTemplateData {
         common: CommonData::new(),
         error,
     };
 
-    let notification = Notification::from_template(
-        Severity::Error,
-        "acme-err",
-        serde_json::to_value(template_data)?,
-        metadata,
-    );
+    let notification =
+        Notification::template_builder("acme-err", serde_json::to_value(template_data)?)
+            .severity(Severity::Error)
+            .field("type", "acme")
+            .field("hostname", proxmox_sys::nodename())
+            .build()?;
 
     send_notification(notification)?;
     Ok(())
@@ -584,12 +469,6 @@ pub fn send_datastore_threshold_exceeded(
     limit: u64,
     value: u64,
 ) -> Result<(), Error> {
-    let metadata = HashMap::from([
-        ("datastore".into(), datastore.into()),
-        ("hostname".into(), proxmox_sys::nodename().into()),
-        ("type".into(), "thresholds".into()),
-    ]);
-
     let is_traffic = threshold == "uploaded" || threshold == "downloaded";
     let template_data = DatastoreThresholdExceededTemplateData::new(
         datastore.to_string(),
@@ -599,12 +478,13 @@ pub fn send_datastore_threshold_exceeded(
         is_traffic,
     );
 
-    let notification = Notification::from_template(
-        Severity::Warning,
-        "thresholds-exceeded",
-        serde_json::to_value(template_data)?,
-        metadata,
-    );
+    let notification =
+        Notification::template_builder("thresholds-exceeded", serde_json::to_value(template_data)?)
+            .severity(Severity::Warning)
+            .field("type", "thresholds")
+            .field("datastore", datastore)
+            .field("hostname", proxmox_sys::nodename())
+            .build()?;
 
     send_notification(notification)?;
     Ok(())
@@ -619,6 +499,55 @@ pub fn lookup_user_email(userid: &Userid) -> Option<String> {
     }
 
     None
+}
+
+/// Determine the recipient for a datastore-related notification.
+///
+/// Returns `None` if no notification should be sent, either because the legacy notify
+/// settings of the datastore suppress it or because the notify user has no email address.
+fn datastore_notification_recipient(
+    store: &str,
+    notify_setting: fn(&DatastoreNotify) -> Option<Notify>,
+    default: Notify,
+    is_ok: bool,
+) -> Option<Recipient> {
+    let (email, notify, mode) = lookup_datastore_notify_settings(store);
+
+    match mode {
+        NotificationMode::LegacySendmail => {
+            let notify = notify_setting(&notify).unwrap_or(default);
+
+            if notify == Notify::Never || (is_ok && notify == Notify::Error) {
+                return None;
+            }
+
+            email.map(|email| {
+                Recipient::Email(EmailRecipient {
+                    mailto: vec![email],
+                    ..Default::default()
+                })
+            })
+        }
+        NotificationMode::NotificationSystem => Some(Recipient::Matcher),
+    }
+}
+
+/// Determine the recipient for a tape-related notification.
+///
+/// Returns `None` if no notification should be sent because the notify user has no email
+/// address.
+fn tape_notification_recipient(mode: &TapeNotificationMode) -> Option<Recipient> {
+    match mode {
+        TapeNotificationMode::LegacySendmail { notify_user } => {
+            lookup_user_email(notify_user).map(|email| {
+                Recipient::Email(EmailRecipient {
+                    mailto: vec![email],
+                    ..Default::default()
+                })
+            })
+        }
+        TapeNotificationMode::NotificationSystem => Some(Recipient::Matcher),
+    }
 }
 
 /// Lookup Datastore notify settings

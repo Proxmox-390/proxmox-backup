@@ -186,7 +186,6 @@ async fn run() -> Result<(), Error> {
         .init()?;
 
     proxmox_backup::auth_helpers::setup_auth_context(false);
-    proxmox_backup::server::notifications::init()?;
     metric_collection::init()?;
     proxmox_acme_api::init(configdir!("/acme"), false)?;
     proxmox_access_log::init_access_log_api(pbs_buildcfg::API_ACCESS_LOG_FN)?;

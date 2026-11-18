@@ -669,7 +669,6 @@ async fn run() -> Result<(), Error> {
         .stderr_on_no_workertask()
         .tasklog_pbs()
         .init()?;
-    proxmox_backup::server::notifications::init()?;
     proxmox_product_config::init(pbs_config::backup_user()?, pbs_config::priv_user()?);
     proxmox_acme_api::init(configdir!("/acme"), false)?;
 

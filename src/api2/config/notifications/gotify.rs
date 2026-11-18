@@ -1,15 +1,17 @@
 use anyhow::Error;
 use serde_json::Value;
 
-use proxmox_notify::endpoints::gotify::{
-    DeleteableGotifyProperty, GotifyConfig, GotifyConfigUpdater, GotifyPrivateConfig,
-    GotifyPrivateConfigUpdater,
+use proxmox_config_digest::ConfigDigest;
+use proxmox_notify::api_types::{
+    DeletableGotifyProperty, ENTITY_NAME_SCHEMA, GotifyConfig, GotifyConfigUpdater,
+    GotifyPrivateConfig, GotifyPrivateConfigUpdater,
 };
-use proxmox_notify::schema::ENTITY_NAME_SCHEMA;
 use proxmox_router::{Permission, Router, RpcEnvironment};
 use proxmox_schema::api;
 
 use pbs_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY, PROXMOX_CONFIG_DIGEST_SCHEMA};
+
+use crate::server;
 
 #[api(
     protected: true,
@@ -30,7 +32,7 @@ pub fn list_endpoints(
     _param: Value,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Vec<GotifyConfig>, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
 
     let endpoints = proxmox_notify::api::gotify::get_endpoints(&config)?;
 
@@ -53,10 +55,10 @@ pub fn list_endpoints(
 )]
 /// Get a gotify endpoint.
 pub fn get_endpoint(name: String, rpcenv: &mut dyn RpcEnvironment) -> Result<GotifyConfig, Error> {
-    let config = pbs_config::notifications::config()?;
+    let config = pbs_config::notifications::config(server::notifications::context())?;
     let endpoint = proxmox_notify::api::gotify::get_endpoint(&config, &name)?;
 
-    rpcenv["digest"] = hex::encode(config.digest()).into();
+    rpcenv["digest"] = config.digest().to_hex().into();
 
     Ok(endpoint)
 }
@@ -85,7 +87,7 @@ pub fn add_endpoint(
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     let private_endpoint_config = GotifyPrivateConfig {
         name: endpoint.name.clone(),
         token,
@@ -117,7 +119,7 @@ pub fn add_endpoint(
                 type: Array,
                 optional: true,
                 items: {
-                    type: DeleteableGotifyProperty,
+                    type: DeletableGotifyProperty,
                 }
             },
             digest: {
@@ -135,13 +137,12 @@ pub fn update_endpoint(
     name: String,
     updater: GotifyConfigUpdater,
     token: Option<String>,
-    delete: Option<Vec<DeleteableGotifyProperty>>,
-    digest: Option<String>,
+    delete: Option<Vec<DeletableGotifyProperty>>,
+    digest: Option<ConfigDigest>,
     _rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
-    let digest = digest.map(hex::decode).transpose()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
 
     proxmox_notify::api::gotify::update_endpoint(
         &mut config,
@@ -149,7 +150,7 @@ pub fn update_endpoint(
         updater,
         GotifyPrivateConfigUpdater { token },
         delete.as_deref(),
-        digest.as_deref(),
+        digest,
     )?;
 
     pbs_config::notifications::save_config(config)?;
@@ -172,7 +173,7 @@ pub fn update_endpoint(
 /// Delete gotify endpoint.
 pub fn delete_endpoint(name: String, _rpcenv: &mut dyn RpcEnvironment) -> Result<(), Error> {
     let _lock = pbs_config::notifications::lock_config()?;
-    let mut config = pbs_config::notifications::config()?;
+    let mut config = pbs_config::notifications::config(server::notifications::context())?;
     proxmox_notify::api::gotify::delete_gotify_endpoint(&mut config, &name)?;
 
     pbs_config::notifications::save_config(config)?;

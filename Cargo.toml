@@ -236,7 +236,7 @@ proxmox-ldap.workspace = true
 proxmox-metrics.workspace = true
 proxmox-network-api = { workspace = true, features = [ "impl" ] }
 proxmox-network-types.workspace = true
-proxmox-notify = { workspace = true, features = [ "pbs-context", "legacy-matchers" ] }
+proxmox-notify = { workspace = true, features = [ "pbs-context", "legacy-matchers", "api-impl", "send-impl", "api-types" ]}
 proxmox-openid.workspace = true
 proxmox-product-config.workspace = true
 proxmox-parallel-handler.workspace = true
