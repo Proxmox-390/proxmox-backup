@@ -73,13 +73,14 @@ pub struct PxarPrevRef {
     pub archive_name: String,
 }
 
+#[allow(clippy::unnecessary_cast)] // f_type is u32 on s390x, i64 elsewhere
 fn detect_fs_type(fd: RawFd) -> Result<i64, Errno> {
     let mut fs_stat = std::mem::MaybeUninit::uninit();
     let res = unsafe { libc::fstatfs(fd, fs_stat.as_mut_ptr()) };
     Errno::result(res)?;
     let fs_stat = unsafe { fs_stat.assume_init() };
 
-    Ok(fs_stat.f_type)
+    Ok(fs_stat.f_type as i64)
 }
 
 fn strip_ascii_whitespace(line: &[u8]) -> &[u8] {

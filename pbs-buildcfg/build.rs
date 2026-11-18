@@ -22,6 +22,7 @@ fn main() {
         Ok("x86_64") => "x86_64-linux-gnu",
         Ok("aarch64") => "aarch64-linux-gnu",
         Ok("riscv64") => "riscv64-linux-gnu",
+        Ok("s390x") => "s390x-linux-gnu",
         Ok(arch) => {
             panic!("Unsupported architecture: {arch}");
         }
