@@ -1,3 +1,22 @@
+rust-proxmox-backup (4.2.14-1) trixie; urgency=medium
+
+  * notifications: send all notifications through the notification queue,
+    which the proxmox-backup service processes. Privileged processes no longer
+    block on slow notification targets, and a notification that was being sent
+    when the service stopped is sent again after the restart, instead of being
+    lost. Delivery errors are logged to the journal of the proxmox-backup
+    service instead of the task log of the job; test notifications from the
+    GUI are still sent directly, so their result can be shown.
+
+  * notifications: also send the mail of verification jobs in legacy-sendmail
+    mode with 'notify=error' if only some snapshots failed to verify.
+
+  * notifications: in legacy-sendmail mode, also read the notification
+    configuration, so a broken configuration now also fails the delivery of
+    these mails.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 21:42:37 +0100
+
 rust-proxmox-backup (4.2.12-1) trixie; urgency=medium
 
   * api: network: reject interface comments with Mako template tags that
