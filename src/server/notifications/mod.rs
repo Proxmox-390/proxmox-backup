@@ -1,15 +1,17 @@
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Error;
 use const_format::concatcp;
-use nix::unistd::Uid;
+use nix::sys::stat::Mode;
 
 use proxmox_notify::context::pbs::PBSContext;
+use proxmox_notify::queue::{QueueConsumer, QueueSubmitter, QueueWorker};
 use proxmox_notify::{Context, EmailRecipient, Notification, Recipient, Severity};
 use proxmox_schema::ApiType;
 use proxmox_sys::fs::{CreateOptions, create_path};
+use proxmox_uuid::Uuid;
 
 use crate::tape::TapeNotificationMode;
 use pbs_api_types::{
@@ -17,7 +19,9 @@ use pbs_api_types::{
     Notify, SyncJobConfig, TapeBackupJobSetup, User, Userid, VerificationJobConfig,
 };
 
-const SPOOL_DIR: &str = concatcp!(pbs_buildcfg::PROXMOX_BACKUP_STATE_DIR, "/notifications");
+const NOTIFICATION_BASE_DIR: &str =
+    concatcp!(pbs_buildcfg::PROXMOX_BACKUP_STATE_DIR, "/notifications");
+const QUEUE_DIR: &str = concatcp!(NOTIFICATION_BASE_DIR, "/queue");
 
 mod template_data;
 
@@ -35,101 +39,111 @@ pub fn context() -> &'static Context {
     CONTEXT.get_or_init(|| Context::new(PBSContext))
 }
 
-/// Create the directory which will be used to temporarily store notifications
-/// which were sent from an unprivileged process.
-pub fn create_spool_dir() -> Result<(), Error> {
+/// Creates directories used for queuing notifications.
+pub fn create_notification_dirs() -> Result<(), Error> {
     let backup_user = proxmox_product_config::get_api_user();
     let opts = CreateOptions::new()
         .owner(backup_user.uid)
         .group(backup_user.gid);
 
-    create_path(SPOOL_DIR, None, Some(opts))?;
+    create_path(NOTIFICATION_BASE_DIR, None, Some(opts))?;
+
+    // The queue is writable by anybody in the 'backup' group, the sticky bit keeps them from
+    // removing or replacing each other's notifications.
+    let opts = CreateOptions::new()
+        .owner(proxmox_product_config::get_priv_user().uid)
+        .group(backup_user.gid)
+        .perm(Mode::from_bits_truncate(0o3770));
+
+    proxmox_sys::fs::ensure_dir_exists(QUEUE_DIR, &opts, true)?;
+
     Ok(())
-}
-
-async fn send_queued_notifications() -> Result<(), Error> {
-    let mut read_dir = tokio::fs::read_dir(SPOOL_DIR).await?;
-
-    let mut notifications = Vec::new();
-
-    while let Some(entry) = read_dir.next_entry().await? {
-        let path = entry.path();
-
-        if let Some(ext) = path.extension() {
-            if ext == "json" {
-                let p = path.clone();
-
-                let bytes = tokio::fs::read(p).await?;
-                let notification: Notification = serde_json::from_slice(&bytes)?;
-                notifications.push(notification);
-
-                // Currently, there is no retry-mechanism in case of failure...
-                // For retries, we'd have to keep track of which targets succeeded/failed
-                // to send, so we do not retry notifying a target which succeeded before.
-                tokio::fs::remove_file(path).await?;
-            }
-        }
-    }
-
-    if notifications.is_empty() {
-        return Ok(());
-    }
-
-    // Make sure that we send the oldest notification first
-    notifications.sort_unstable_by_key(|n| n.timestamp());
-
-    let context = context();
-
-    let res = tokio::task::spawn_blocking(move || {
-        let config = pbs_config::notifications::config(context)?;
-        for notification in notifications {
-            if let Err(err) = proxmox_notify::send(context, &config, &notification) {
-                log::error!("failed to send notification: {err}");
-            }
-        }
-
-        Ok::<(), Error>(())
-    })
-    .await?;
-
-    if let Err(e) = res {
-        log::error!("could not read notification config: {e}");
-    }
-
-    Ok::<(), Error>(())
 }
 
 /// Worker task to periodically send any queued notifications.
 pub async fn notification_worker() {
-    loop {
-        let delay_target = Instant::now() + Duration::from_secs(5);
+    let consumer = QueueConsumer::new(QUEUE_DIR);
 
-        if let Err(err) = send_queued_notifications().await {
-            log::error!("notification worker task error: {err}");
-        }
+    let worker = QueueWorker::builder(context().clone(), consumer)
+        .interval(Duration::from_secs(5))
+        .retry_attempts(2)
+        .build();
 
-        tokio::time::sleep_until(tokio::time::Instant::from_std(delay_target)).await;
+    tokio::select! {
+        _ = worker.run() => {}
+        _ = migrate_leftover_notifications_loop() => {}
     }
 }
 
-fn send_notification(notification: Notification) -> Result<(), Error> {
-    let context = context();
+/// Periodically move notifications from the old spool directory to the new queue.
+///
+/// After an upgrade, proxy processes running the old binary keep spooling notifications there
+/// until all of their worker tasks have finished, so checking only at startup is not enough.
+///
+/// FIXME: MAJOR VERSION: Remove
+async fn migrate_leftover_notifications_loop() {
+    loop {
+        match tokio::task::spawn_blocking(migrate_leftover_notifications).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => log::error!("failed to migrate notifications: {err:#}"),
+            Err(err) => log::error!("notification migration task failed: {err}"),
+        }
 
-    if nix::unistd::ROOT == Uid::current() {
-        let config = pbs_config::notifications::config(context)?;
-        proxmox_notify::send(context, &config, &notification)?;
-    } else {
-        let ser = serde_json::to_vec(&notification)?;
-        let path = Path::new(SPOOL_DIR).join(format!("{id}.json", id = notification.id()));
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    }
+}
 
-        let backup_user = proxmox_product_config::get_api_user();
-        let opts = CreateOptions::new()
-            .owner(backup_user.uid)
-            .group(backup_user.gid);
-        proxmox_sys::fs::replace_file(path, &ser, opts, true)?;
-        log::info!("queued notification (id={id})", id = notification.id())
+/// Move any left-over notifications from the old spool directory at
+/// /var/lib/proxmox-backup/notifications to the new queue
+/// at /var/lib/proxmox-backup/notifications/queue
+fn migrate_leftover_notifications() -> Result<(), Error> {
+    let read_dir = std::fs::read_dir(NOTIFICATION_BASE_DIR)?;
+
+    for entry in read_dir.flatten() {
+        if let Some((name, ext)) = entry.file_name().to_string_lossy().split_once(".") {
+            if ext == "json" && Uuid::parse_str(name).is_ok() {
+                let path = entry.path();
+
+                if let Err(err) = migrate_single_notification(&path) {
+                    log::error!(
+                        "failed to migrate notification at '{p}' to new queue: {err:#}",
+                        p = path.display()
+                    );
+                }
+            }
+        }
     }
 
+    Ok(())
+}
+
+fn migrate_single_notification(path: &Path) -> Result<(), Error> {
+    let bytes = std::fs::read(path)?;
+
+    // Technically, we don't need to parse, but this is just to ensure that
+    // we don't migrate over something that is not understood by the
+    // notification worker.
+    let notification: Notification = serde_json::from_slice(&bytes)?;
+
+    let uuid = notification.id().clone();
+
+    // Manually move the notification into the new queue directory.
+    //
+    // Use a manual rename instead of resubmitting to ensure atomicity.
+    std::fs::rename(
+        path,
+        Path::new(QUEUE_DIR).join(format!("notification-{uuid}")),
+    )?;
+
+    log::info!("moved notification {uuid} to new notification queue");
+
+    Ok(())
+}
+
+fn send_notification(notification: Notification) -> Result<(), Error> {
+    let writer = QueueSubmitter::new(QUEUE_DIR);
+
+    writer.submit(&notification)?;
     Ok(())
 }
 

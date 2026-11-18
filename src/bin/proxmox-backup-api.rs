@@ -60,7 +60,7 @@ async fn run() -> Result<(), Error> {
     proxmox_backup::server::create_state_dir()?;
     proxmox_backup::server::create_active_operations_dir()?;
     proxmox_backup::server::jobstate::create_jobstate_dir()?;
-    proxmox_backup::server::notifications::create_spool_dir()?;
+    proxmox_backup::server::notifications::create_notification_dirs()?;
     proxmox_backup::tape::create_tape_status_dir()?;
     proxmox_backup::tape::create_drive_state_dir()?;
     proxmox_backup::tape::create_changer_state_dir()?;
