@@ -15,6 +15,8 @@ use crate::{BackupLockGuard, open_backup_lockfile};
 const CONF_FILE: &str = configdir!("/node.cfg");
 const LOCK_FILE: &str = configdir!("/.node.lck");
 
+const CONSENT_TEXT_REGEX: &str = r"^[A-Za-z0-9+/]+={0,2}$";
+
 pub fn lock() -> Result<BackupLockGuard, Error> {
     open_backup_lockfile(LOCK_FILE, None, true)
 }
@@ -24,7 +26,15 @@ pub fn config() -> Result<(NodeConfig, [u8; 32]), Error> {
     let content = proxmox_sys::fs::file_read_optional_string(CONF_FILE)?.unwrap_or_default();
 
     let digest = openssl::sha::sha256(content.as_bytes());
-    let data: NodeConfig = proxmox_simple_config::from_str(&content, &NodeConfig::API_SCHEMA)?;
+    let mut data: NodeConfig = proxmox_simple_config::from_str(&content, &NodeConfig::API_SCHEMA)?;
+
+    if let Some(consent_text) = data.consent_text.take() {
+        let regex = regex::Regex::new(CONSENT_TEXT_REGEX)?;
+        if regex.is_match(&consent_text) {
+            data.consent_text = Some(consent_text);
+        }
+        // dropped if the regex does not match
+    }
 
     Ok((data, digest))
 }
