@@ -17,6 +17,16 @@ Overview
   is routed to by a matcher. There are multiple types of target, mail-based
   (Sendmail and SMTP) and Gotify.
 
+Notification events are not sent by the process that emits them. They are put
+into a queue and sent by the ``proxmox-backup`` service within a few seconds.
+Errors while sending, for example an unreachable mail server, are therefore
+logged to the system journal of that service, see
+``journalctl -u proxmox-backup``, not to the task log of the job that emitted
+the event. Test notifications sent from the GUI are the exception, they are
+sent directly, so that the result can be shown. If the service is interrupted
+while sending a notification, it sends the notification again after it has been
+restarted.
+
 Global notification settings can be configured in the GUI under *Configuration →
 Notifications*. The configuration is stored in :ref:`notifications.cfg` and
 :ref:`notifications_priv.cfg` - the latter contains sensitive configuration
@@ -448,6 +458,11 @@ headers are forwarded as-is. For all other targets, the system tries to extract
 both a subject line and the main text body from the email content. In instances
 where emails solely consist of HTML content, they will be transformed into
 plain text format during this process.
+
+If Proxmox VE is installed on the same host, system mails are only handled by
+the notification system of Proxmox VE. Mails larger than 1 MiB are rejected and
+bounce. If a mail cannot be queued, the local mail system keeps it and tries
+again later.
 
 Permissions
 -----------
