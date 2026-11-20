@@ -1,3 +1,16 @@
+rust-proxmox-backup (4.2.14-1+s390x1) trixie; urgency=medium
+
+  * s390x port, rebased onto 4.2.14-1:
+    - fix the build on s390x (pbs-buildcfg multiarch triplet; the pxar
+      creator's statfs f_type is u32 there).
+    - file-restore postinst: add the s390x multiarch path.
+    - proxmox-backup-server: depend on dmidecode only on the architectures
+      Debian builds it for (not s390x).
+    - ship pbs-enterprise.sources disabled; there is no enterprise
+      repository for the port.
+
+ -- Yvan Janssens <yvanj@cyber.gent>  Fri, 20 Nov 2026 15:05:33 +0100
+
 rust-proxmox-backup (4.2.14-1) trixie; urgency=medium
 
   * notifications: send all notifications through the notification queue,
